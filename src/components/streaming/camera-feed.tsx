@@ -1,0 +1,154 @@
+"use client";
+
+import { memo, useCallback, useEffect } from "react";
+import { cn } from "@/lib/utils";
+import { Loader2, VideoOff } from "lucide-react";
+import { useGo2rtcStream } from "@/hooks/use-go2rtc-stream";
+
+interface CameraFeedProps {
+  cameraName: string;
+  cameraSlug: string;
+  className?: string;
+}
+
+export const CameraFeed = memo(function CameraFeed({
+  cameraName,
+  cameraSlug,
+  className,
+}: CameraFeedProps) {
+  const { status, videoRef, retry, recover, setFullscreen } = useGo2rtcStream(cameraSlug);
+
+  const isLive = status === "live";
+
+  // Unmute on native fullscreen, re-mute on exit
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const onFullscreenChange = () => {
+      const isFs =
+        !!document.fullscreenElement ||
+        !!(document as unknown as { webkitFullscreenElement?: Element }).webkitFullscreenElement;
+      video.muted = !isFs;
+      setFullscreen(isFs);
+      if (!isFs) {
+        recover();
+      }
+    };
+
+    const onIOSEnd = () => {
+      video.muted = true;
+      setFullscreen(false);
+      recover();
+    };
+    const onIOSBegin = () => {
+      video.muted = false;
+      setFullscreen(true);
+    };
+
+    // iOS fires on the video element, others on document
+    video.addEventListener("webkitendfullscreen", onIOSEnd);
+    video.addEventListener("webkitbeginfullscreen", onIOSBegin);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+
+    return () => {
+      video.removeEventListener("webkitendfullscreen", onIOSEnd);
+      video.removeEventListener("webkitbeginfullscreen", onIOSBegin);
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
+    };
+  }, [videoRef, recover, setFullscreen]);
+
+  const handleTap = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Unmute immediately within the user gesture so the browser allows it.
+    // The fullscreenchange listener is async and may be outside gesture context.
+    video.muted = false;
+
+    // Enter native fullscreen on the video element
+    if ("webkitEnterFullscreen" in video) {
+      // iOS Safari — native video fullscreen
+      (video as HTMLVideoElement & { webkitEnterFullscreen: () => void }).webkitEnterFullscreen();
+    } else if (video.requestFullscreen) {
+      video.requestFullscreen().catch(() => {
+        // Fullscreen denied — re-mute since we're still in grid view
+        video.muted = true;
+      });
+    }
+  }, [videoRef]);
+
+  const handleRetry = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      retry();
+    },
+    [retry]
+  );
+
+  return (
+    <div className={cn("flex flex-col", className)}>
+      {/* Camera name and status indicator */}
+      <div className="flex items-center justify-between px-1 pb-1.5">
+        <span className="text-sm font-semibold text-foreground truncate">
+          {cameraName}
+        </span>
+        {isLive ? (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="h-2 w-2 rounded-full bg-green-500 live-pulse" />
+            <span className="text-[11px] font-semibold text-green-500 uppercase tracking-wider">
+              Live
+            </span>
+          </div>
+        ) : status === "connecting" ? (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+            <span className="text-[11px] font-medium text-muted-foreground">
+              Connecting
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Camera feed */}
+      <div
+        className="camera-feed-container shadow-sm rounded-xl overflow-hidden cursor-pointer"
+        onClick={isLive ? handleTap : undefined}
+        role={isLive ? "button" : undefined}
+        tabIndex={isLive ? 0 : undefined}
+      >
+        {/* Loading spinner while connecting */}
+        {status === "connecting" && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black">
+            <Loader2 className="h-8 w-8 animate-spin text-white/40" />
+          </div>
+        )}
+
+        {/* Live video stream — always muted in grid, unmuted in native fullscreen */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={cn(
+            "absolute inset-0 w-full h-full object-contain transition-opacity duration-300",
+            isLive ? "opacity-100" : "opacity-0 pointer-events-none"
+          )}
+        />
+
+        {/* Offline — retry button */}
+        {status === "offline" && (
+          <button
+            onClick={handleRetry}
+            className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black"
+          >
+            <VideoOff className="h-8 w-8 text-white/60" />
+            <span className="text-xs text-white/60">Tap to retry</span>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+});

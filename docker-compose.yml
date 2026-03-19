@@ -1,0 +1,111 @@
+services:
+  app:
+    image: ghcr.io/wallnalyr/home-nvr:latest
+    environment:
+      # --- Required ---
+      ADMIN_PASSWORD: changeme          # Your login password
+      TZ: America/New_York              # Your timezone (IANA format)
+      # --- Defaults (no changes needed for standard setup) ---
+      DATABASE_URL: file:/app/prisma/data/camera-monitor.db
+      FRIGATE_URL: http://frigate:5000
+      FRIGATE_INTERNAL_URL: http://frigate:1984
+      MQTT_URL: mqtt://mqtt:1883
+      NEXT_PUBLIC_APP_URL: https://camera.internal  # Used for WebRTC ICE candidates
+      VAPID_SUBJECT: mailto:you@example.com          # Required for push — must be a routable email domain (not .internal/.local)
+      # --- Optional (auto-generated if not set) ---
+      # JWT_SECRET:                     # Auto-generated and persisted on first boot
+      # VAPID_PUBLIC_KEY:               # Auto-generated and persisted on first boot
+      # VAPID_PRIVATE_KEY:              # Auto-generated and persisted on first boot
+      # --- Optional features ---
+      # ADMIN_USERNAME: admin           # Default: admin
+    volumes:
+      - app-data:/app/prisma/data
+      - frigate-config:/config/frigate
+      - recordings:/recordings:ro
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      mqtt:
+        condition: service_started
+    networks:
+      - traefik-proxy
+      - default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.home-nvr.rule=Host(`camera.internal`)"
+      - "traefik.http.routers.home-nvr.entrypoints=websecure"
+      - "traefik.http.routers.home-nvr.tls=true"
+      - "traefik.http.services.home-nvr.loadbalancer.server.port=3000"
+    restart: unless-stopped
+
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:stable
+    shm_size: 512mb
+    ports:
+      - "8554:8554"
+      - "8555:8555/tcp"
+      - "8555:8555/udp"
+    environment:
+      TZ: America/New_York
+      # FRIGATE_RTSP_PASSWORD:
+      # PLUS_API_KEY:
+    volumes:
+      - frigate-config:/config
+      - clips:/media/frigate/clips
+      - recordings:/media/frigate/recordings
+      - /etc/localtime:/etc/localtime:ro
+    # --- GPU: uncomment for NVIDIA (requires nvidia-container-toolkit) ---
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    # --- Coral TPU: uncomment the relevant device line ---
+    # devices:
+    #   - /dev/bus/usb:/dev/bus/usb       # Coral USB
+    #   - /dev/apex_0:/dev/apex_0         # Coral PCIe / M.2
+    depends_on:
+      mqtt:
+        condition: service_started
+    networks:
+      - default
+      - traefik-proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.go2rtc.rule=Host(`camera.internal`) && PathPrefix(`/go2rtc/`)"
+      - "traefik.http.routers.go2rtc.entrypoints=websecure"
+      - "traefik.http.routers.go2rtc.tls=true"
+      - "traefik.http.middlewares.go2rtc-strip.stripprefix.prefixes=/go2rtc"
+      - "traefik.http.routers.go2rtc.middlewares=go2rtc-strip"
+      - "traefik.http.services.go2rtc.loadbalancer.server.port=1984"
+    restart: unless-stopped
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    command: >
+      sh -c '
+      echo "listener 1883" > /mosquitto/config/mosquitto.conf &&
+      echo "allow_anonymous true" >> /mosquitto/config/mosquitto.conf &&
+      echo "persistence true" >> /mosquitto/config/mosquitto.conf &&
+      echo "persistence_location /mosquitto/data/" >> /mosquitto/config/mosquitto.conf &&
+      echo "log_dest stdout" >> /mosquitto/config/mosquitto.conf &&
+      exec mosquitto -c /mosquitto/config/mosquitto.conf'
+    volumes:
+      - mqtt-data:/mosquitto/data
+      - mqtt-log:/mosquitto/log
+    networks:
+      - default
+    restart: unless-stopped
+
+volumes:
+  app-data:
+  frigate-config:
+  clips:
+  recordings:
+  mqtt-data:
+  mqtt-log:
+
+networks:
+  traefik-proxy:
+    external: true

@@ -1,0 +1,99 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Camera {
+  id              String   @id @default(cuid())
+  name            String   @unique // display name, allows spaces
+  slug            String   @unique
+  rtspUrl         String   // Main stream RTSP URL
+  rtspSubUrl      String?  // Sub stream RTSP URL (lower res)
+  enabled         Boolean  @default(true)
+
+  // Detection settings
+  detectEnabled   Boolean  @default(true)
+  detectWidth     Int      @default(1280)
+  detectHeight    Int      @default(720)
+  detectFps       Int      @default(5)
+  objectsTrack    String   @default("person,car,cat,dog") // comma-separated
+
+  // Audio detection (comma-separated labels, empty string = disabled)
+  audioDetect     String   @default("fire_alarm,scream,bark,glass")
+
+  // Recording settings
+  recordEnabled   Boolean  @default(true)
+  recordRetainDays Int     @default(7)
+
+  // Snapshot settings
+  snapshotsEnabled Boolean @default(true)
+
+  // Notification settings
+  notifyEnabled    Boolean @default(true)
+  notifyCooldownSec Int    @default(30)
+
+  // Motion settings
+  motionThreshold  Int     @default(30)
+  motionMask       String? // JSON string of mask coordinates
+
+  // Order in grid
+  sortOrder        Int     @default(0)
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  zones            Zone[]
+}
+
+model Zone {
+  id          String  @id @default(cuid())
+  name        String
+  coordinates String  // JSON array of [x,y] normalized floats 0-1
+  objects     String  @default("person,car") // comma-separated objects to detect in zone
+  cameraId    String
+  camera      Camera  @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+
+  @@unique([cameraId, name])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  preferences NotificationPreference[]
+}
+
+model NotificationPreference {
+  id             String           @id @default(cuid())
+  subscriptionId String
+  subscription   PushSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  camera         String           @default("*") // camera slug or "*" for all
+  objectType     String           @default("*") // object type or "*" for all
+  enabled        Boolean          @default(true)
+
+  @@unique([subscriptionId, camera, objectType])
+}
+
+model NotificationLog {
+  id         String   @id @default(cuid())
+  eventId    String
+  camera     String
+  objectType String
+  sentAt     DateTime @default(now())
+  sentCount  Int      @default(0) // number of subscriptions notified
+  snapshotUrl String?
+}
+
+model SystemConfig {
+  key   String @id
+  value String
+}
