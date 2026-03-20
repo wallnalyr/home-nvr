@@ -6,6 +6,7 @@ import { EventFilters } from "@/components/events/event-filters";
 import { useCameras } from "@/hooks/use-cameras";
 import { useEvents } from "@/hooks/use-events";
 import { useEnabledObjects } from "@/hooks/use-enabled-objects";
+import { useEnabledAudio } from "@/hooks/use-enabled-audio";
 import { useLastSeenEventTime } from "@/hooks/use-unseen-events";
 import { startOfDay, subDays, getUnixTime } from "date-fns";
 import { tzFromDate } from "@/lib/timezone";
@@ -33,6 +34,11 @@ function rangeToAfter(range: string): number {
 export default function EventsPage() {
   const { cameras } = useCameras();
   const { enabledObjects } = useEnabledObjects();
+  const { enabledAudio } = useEnabledAudio();
+  const allLabels = useMemo(
+    () => [...enabledObjects, ...enabledAudio],
+    [enabledObjects, enabledAudio]
+  );
   const [selectedCamera, setSelectedCamera] = useState("all");
   const [selectedLabel, setSelectedLabel] = useState("all");
   const [selectedRange, setSelectedRange] = useState("3d");
@@ -144,7 +150,7 @@ export default function EventsPage() {
     <div>
       <EventFilters
         cameras={cameras}
-        enabledObjects={enabledObjects}
+        enabledObjects={allLabels}
         selectedCamera={selectedCamera}
         selectedLabel={selectedLabel}
         selectedRange={selectedRange}
