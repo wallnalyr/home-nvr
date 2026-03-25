@@ -103,7 +103,6 @@ export function ClipPlayer({ eventId }: ClipPlayerProps) {
       <video
         ref={videoRef}
         poster={`/api/frigate/events/${eventId}/snapshot`}
-        autoPlay
         muted
         controls
         playsInline
