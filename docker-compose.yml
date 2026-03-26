@@ -1,0 +1,115 @@
+services:
+  app:
+    image: ghcr.io/wallnalyr/home-nvr:latest
+    environment:
+      # --- Required ---
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      TZ: ${TZ:-America/New_York}
+      # --- Defaults (no changes needed for standard setup) ---
+      DATABASE_URL: file:/app/prisma/data/camera-monitor.db
+      FRIGATE_URL: http://frigate:5000
+      FRIGATE_INTERNAL_URL: http://frigate:1984
+      MQTT_URL: mqtt://mqtt:1883
+      NEXT_PUBLIC_APP_URL: ${APP_URL:-https://camera.internal}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:you@example.com}
+      # --- Optional (auto-generated if not set) ---
+      # JWT_SECRET:
+      # VAPID_PUBLIC_KEY:
+      # VAPID_PRIVATE_KEY:
+      # --- Optional features ---
+      # ADMIN_USERNAME: admin
+      # --- GPU / Frigate+ (set these when using NVIDIA GPU + Frigate+ model) ---
+      GPU_ENABLED: ${GPU_ENABLED:-false}
+      GPU_VRAM_MB: ${GPU_VRAM_MB:-0}
+      FRIGATE_IMAGE_TAG: ${FRIGATE_IMAGE_TAG:-stable}
+      FRIGATE_PLUS_MODEL_ID: ${FRIGATE_PLUS_MODEL_ID:-}
+    volumes:
+      - /mnt/storage/appdata/home-nvr/db:/app/prisma/data
+      - /mnt/storage/appdata/home-nvr/frigate-config:/config/frigate
+      - /mnt/storage/appdata/home-nvr/recordings:/recordings:ro
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      mqtt:
+        condition: service_started
+    networks:
+      - traefik-proxy
+      - default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.home-nvr.rule=Host(`${APP_HOST:-camera.internal}`)"
+      - "traefik.http.routers.home-nvr.entrypoints=websecure"
+      - "traefik.http.routers.home-nvr.tls=true"
+      - "traefik.http.services.home-nvr.loadbalancer.server.port=3000"
+    restart: unless-stopped
+
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:${FRIGATE_IMAGE_TAG:-stable}
+    tmpfs:
+      - /tmp/cache:size=1g
+    shm_size: 512mb
+    ports:
+      - "8554:8554"
+      - "8555:8555/tcp"
+      - "8555:8555/udp"
+    environment:
+      TZ: ${TZ:-America/New_York}
+      PLUS_API_KEY: ${PLUS_API_KEY:-}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    volumes:
+      - /mnt/storage/appdata/home-nvr/frigate-config:/config
+      - /mnt/storage/appdata/home-nvr/clips:/media/frigate/clips
+      - /mnt/storage/appdata/home-nvr/recordings:/media/frigate/recordings
+      - /etc/localtime:/etc/localtime:ro
+    # --- GPU: NVDEC hardware decoding (requires nvidia-container-toolkit) ---
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # --- Coral TPU: uncomment the relevant device line ---
+    # devices:
+    #   - /dev/bus/usb:/dev/bus/usb       # Coral USB
+    #   - /dev/apex_0:/dev/apex_0         # Coral PCIe / M.2
+    depends_on:
+      mqtt:
+        condition: service_started
+    networks:
+      - default
+      - traefik-proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.go2rtc.rule=Host(`${APP_HOST:-camera.internal}`) && PathPrefix(`/go2rtc/`)"
+      - "traefik.http.routers.go2rtc.entrypoints=websecure"
+      - "traefik.http.routers.go2rtc.tls=true"
+      - "traefik.http.middlewares.go2rtc-strip.stripprefix.prefixes=/go2rtc"
+      - "traefik.http.routers.go2rtc.middlewares=go2rtc-strip"
+      - "traefik.http.services.go2rtc.loadbalancer.server.port=1984"
+    restart: unless-stopped
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    command: >
+      sh -c '
+      echo "listener 1883" > /mosquitto/config/mosquitto.conf &&
+      echo "allow_anonymous true" >> /mosquitto/config/mosquitto.conf &&
+      echo "persistence true" >> /mosquitto/config/mosquitto.conf &&
+      echo "persistence_location /mosquitto/data/" >> /mosquitto/config/mosquitto.conf &&
+      echo "log_dest stdout" >> /mosquitto/config/mosquitto.conf &&
+      exec mosquitto -c /mosquitto/config/mosquitto.conf'
+    volumes:
+      - mqtt-data:/mosquitto/data
+      - mqtt-log:/mosquitto/log
+    networks:
+      - default
+    restart: unless-stopped
+
+volumes:
+  mqtt-data:
+  mqtt-log:
+
+networks:
+  traefik-proxy:
+    external: true

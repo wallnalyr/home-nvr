@@ -1,0 +1,16 @@
+.git
+.github
+.claude
+.env
+.env.local
+node_modules
+.next
+out
+dist
+prisma/data
+*.db
+*.db-journal
+npm-debug.log*
+.DS_Store
+.vscode
+.idea
