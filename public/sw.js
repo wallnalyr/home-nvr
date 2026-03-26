@@ -1,13 +1,17 @@
 /// <reference lib="webworker" />
 
-const CACHE_NAME = "camera-monitor-v3";
+const CACHE_NAME = "camera-monitor-v2";
+const STATIC_ASSETS = ["/", "/login"];
 
-// Install: skip waiting to activate immediately
+// Install: cache app shell
 self.addEventListener("install", (event) => {
-  event.waitUntil(self.skipWaiting());
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
+  );
+  self.skipWaiting();
 });
 
-// Activate: clean old caches and take control
+// Activate: clean old caches
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -16,47 +20,34 @@ self.addEventListener("activate", (event) => {
           .filter((key) => key !== CACHE_NAME)
           .map((key) => caches.delete(key))
       )
-    ).then(() => self.clients.claim())
+    )
   );
+  self.clients.claim();
 });
 
-// Fetch: only cache static assets — never intercept page navigations or RSC requests
+// Fetch: network-first for API, cache-first for static
 self.addEventListener("fetch", (event) => {
+  const url = new URL(event.request.url);
+
   // Skip non-GET requests
   if (event.request.method !== "GET") return;
 
-  // Never intercept page navigations — let the server handle them directly.
-  // iOS Safari's Cache API has bugs with Vary header matching that cause
-  // cached HTML to be returned for RSC data requests (and vice versa),
-  // resulting in null response errors.
-  if (event.request.mode === "navigate") return;
-
-  // Never intercept Next.js RSC data requests (client-side navigation payloads)
-  if (event.request.headers.get("RSC")) return;
-
-  // Skip API and streaming requests
-  const url = new URL(event.request.url);
+  // Skip API and auth requests
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/go2rtc/")) {
     return;
   }
 
-  // Only cache static assets (_next/static, images, etc.)
-  // Network-first with cache fallback
   event.respondWith(
     fetch(event.request)
       .then((response) => {
+        // Cache successful responses
         if (response.ok && response.type === "basic") {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
         return response;
       })
-      .catch(() =>
-        caches.match(event.request).then((cached) => {
-          // Always return a valid Response — never undefined
-          return cached || new Response("Offline", { status: 503, statusText: "Service Unavailable" });
-        })
-      )
+      .catch(() => caches.match(event.request))
   );
 });
 
