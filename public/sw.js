@@ -102,25 +102,29 @@ self.addEventListener("notificationclick", (event) => {
     return;
   }
 
-  const targetUrl = event.notification.data?.url || "/events";
+  const eventUrl = event.notification.data?.url || "/events";
+  const title = event.notification.title || "Event detected";
+  const body = event.notification.body || "";
 
   event.waitUntil(
     clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then(async (clientList) => {
-        // Try to focus existing window and navigate
+        // Try to focus existing window and show a toast instead of navigating
         for (const client of clientList) {
           if ("focus" in client) {
             await client.focus();
             client.postMessage({
-              type: "NAVIGATE_TO_EVENT",
-              url: targetUrl,
+              type: "NOTIFICATION_TAP",
+              eventUrl,
+              title,
+              body,
             });
             return;
           }
         }
-        // Open new window
-        return clients.openWindow(targetUrl);
+        // No existing window — open the live feed
+        return clients.openWindow("/");
       })
   );
 });

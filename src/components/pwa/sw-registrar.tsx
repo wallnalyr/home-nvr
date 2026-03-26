@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { toast } from "sonner";
 
 function closeNotifications() {
   if ("serviceWorker" in navigator && navigator.serviceWorker.controller) {
@@ -29,10 +30,20 @@ export function SWRegistrar() {
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
-    // Handle navigation messages from service worker (notification click)
+    // Handle notification tap — show a toast with a link to the event
+    // instead of navigating away from the live feed
     const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "NAVIGATE_TO_EVENT" && event.data.url) {
-        window.location.href = event.data.url;
+      if (event.data?.type === "NOTIFICATION_TAP" && event.data.eventUrl) {
+        toast(event.data.title, {
+          description: event.data.body,
+          duration: 10000,
+          action: {
+            label: "View Event",
+            onClick: () => {
+              window.location.href = event.data.eventUrl;
+            },
+          },
+        });
       }
     };
     navigator.serviceWorker.addEventListener("message", handleMessage);
