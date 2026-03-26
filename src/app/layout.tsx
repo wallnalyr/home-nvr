@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import Script from "next/script";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
@@ -60,8 +59,6 @@ export default function RootLayout({
           </TooltipProvider>
         </ThemeProvider>
         <SWRegistrar />
-        <Script src="https://cdn.jsdelivr.net/npm/eruda" strategy="beforeInteractive" />
-        <Script id="eruda-init" strategy="beforeInteractive">{`eruda.init();`}</Script>
       </body>
     </html>
   );
