@@ -1,0 +1,17 @@
+# NVIDIA GPU overlay — add to COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
+#
+# Requires: nvidia-container-toolkit on the host
+# Set in .env: GPU_ENABLED=true, GPU_VRAM_MB=<your vram>, FRIGATE_IMAGE_TAG=stable-tensorrt
+services:
+  frigate:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
