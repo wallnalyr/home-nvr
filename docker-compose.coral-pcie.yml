@@ -1,8 +1,0 @@
-# Coral PCIe / M.2 TPU overlay — add to COMPOSE_FILE in .env:
-#   COMPOSE_FILE=docker-compose.yml:docker-compose.coral-pcie.yml
-#
-# Set in .env: CORAL_DEVICE=pci
-services:
-  frigate:
-    devices:
-      - /dev/apex_0:/dev/apex_0
