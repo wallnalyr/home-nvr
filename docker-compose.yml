@@ -56,11 +56,26 @@ services:
     environment:
       TZ: ${TZ:-America/New_York}
       PLUS_API_KEY: ${PLUS_API_KEY:-}
+      # --- GPU: uncomment for NVIDIA ---
+      # NVIDIA_VISIBLE_DEVICES: all
+      # NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
     volumes:
       - /mnt/storage/appdata/home-nvr/frigate-config:/config
       - /mnt/storage/appdata/home-nvr/clips:/media/frigate/clips
       - /mnt/storage/appdata/home-nvr/recordings:/media/frigate/recordings
       - /etc/localtime:/etc/localtime:ro
+    # --- GPU: uncomment for NVIDIA (requires nvidia-container-toolkit) ---
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    # --- Coral TPU: uncomment ONE of the following ---
+    # devices:
+    #   - /dev/bus/usb:/dev/bus/usb       # Coral USB
+    #   - /dev/apex_0:/dev/apex_0         # Coral PCIe / M.2
     depends_on:
       mqtt:
         condition: service_started

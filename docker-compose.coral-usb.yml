@@ -1,8 +1,0 @@
-# Coral USB TPU overlay — add to COMPOSE_FILE in .env:
-#   COMPOSE_FILE=docker-compose.yml:docker-compose.coral-usb.yml
-#
-# Set in .env: CORAL_DEVICE=usb
-services:
-  frigate:
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
