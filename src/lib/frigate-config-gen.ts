@@ -110,8 +110,13 @@ export async function generateFrigateConfig(): Promise<string> {
     // Use slug as the Frigate camera identifier (no spaces, lowercase)
     const cameraId = camera.slug;
 
-    // go2rtc streams — main stream always, sub stream as separate entry
-    config.go2rtc.streams[cameraId] = [camera.rtspUrl];
+    // go2rtc streams — main stream always, sub stream as separate entry.
+    // The ffmpeg source transcodes audio to Opus on demand for Safari/iOS
+    // WebRTC compatibility (many cameras output G.711 which Safari rejects).
+    config.go2rtc.streams[cameraId] = [
+      camera.rtspUrl,
+      `ffmpeg:${cameraId}#audio=opus`,
+    ];
     if (camera.rtspSubUrl) {
       config.go2rtc.streams[`${cameraId}_sub`] = [camera.rtspSubUrl];
     }
