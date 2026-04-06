@@ -5,8 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export type StreamStatus = "connecting" | "live" | "offline";
 export type StreamMethod = "mse" | "webrtc" | null;
 
-const MAX_RETRIES = 6;
-const RETRY_DELAYS = [1000, 2000, 3000, 5000, 8000, 12000];
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [1000, 2000, 4000];
 
 const MSE_TIMEOUT = 4000;
 const WEBRTC_TIMEOUT = 5000;
@@ -90,6 +90,10 @@ export function useGo2rtcStream(slug: string) {
   // Fullscreen tracking — prevents visibilitychange from tearing down streams
   const fullscreenRef = useRef(false);
 
+  // Track when stream went live — only reset retry count after stable for 5s
+  const liveAtRef = useRef<number>(0);
+  const stableTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const connectRef = useRef<() => void>(() => {});
   const scheduleRetryRef = useRef<() => void>(() => {});
 
@@ -97,6 +101,10 @@ export function useGo2rtcStream(slug: string) {
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
+    }
+    if (stableTimerRef.current) {
+      clearTimeout(stableTimerRef.current);
+      stableTimerRef.current = null;
     }
     if (trimTimerRef.current) {
       clearInterval(trimTimerRef.current);
@@ -135,10 +143,18 @@ export function useGo2rtcStream(slug: string) {
   }, []);
 
   const markLive = useCallback((streamMethod: StreamMethod) => {
-    retryCountRef.current = 0;
     liveRef.current = true;
+    liveAtRef.current = Date.now();
     setMethod(streamMethod);
     setStatus("live");
+    // Only reset retry count after stream is stable for 5 seconds.
+    // Prevents infinite retry loops from cameras that connect briefly then drop.
+    if (stableTimerRef.current) clearTimeout(stableTimerRef.current);
+    stableTimerRef.current = setTimeout(() => {
+      if (liveRef.current) {
+        retryCountRef.current = 0;
+      }
+    }, 5000);
   }, []);
 
   // --- MSE Connection ---
