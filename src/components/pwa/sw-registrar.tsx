@@ -3,9 +3,9 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
 
-function closeNotifications() {
+function closeTransientNotifications() {
   if ("serviceWorker" in navigator && navigator.serviceWorker.controller) {
-    navigator.serviceWorker.controller.postMessage("closeNotifications");
+    navigator.serviceWorker.controller.postMessage("closeTransientNotifications");
   }
 }
 
@@ -40,18 +40,18 @@ export function SWRegistrar() {
       // SW registration failed — non-critical
     });
 
-    // Close notification banners when app opens (badge stays until events tab is viewed)
+    // On app open: close offline/test notifications, keep event notifications
     const initialTimeout = setTimeout(() => {
-      closeNotifications();
+      closeTransientNotifications();
     }, 1000);
 
     // Show toast if opened from a notification (data is in URL hash)
     showNotificationToast();
 
-    // Close notification banners when app becomes visible again
+    // Close transient notifications when app becomes visible again
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        closeNotifications();
+        closeTransientNotifications();
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);

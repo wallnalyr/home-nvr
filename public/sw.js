@@ -3,6 +3,15 @@
 const CACHE_NAME = "camera-monitor-v3";
 const STATIC_ASSETS = ["/", "/login"];
 
+// Tags that should be cleared on app open (not event notifications)
+function isTransientTag(tag) {
+  return !tag || tag === "test" || tag.endsWith("-offline");
+}
+
+function isEventTag(tag) {
+  return tag && !isTransientTag(tag);
+}
+
 // Install: cache app shell
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -51,6 +60,21 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
+async function updateBadge() {
+  if (!("setAppBadge" in self.navigator)) return;
+  try {
+    const notifications = await self.registration.getNotifications();
+    const eventCount = notifications.filter((n) => isEventTag(n.tag)).length;
+    if (eventCount > 0) {
+      await self.navigator.setAppBadge(eventCount);
+    } else {
+      await self.navigator.clearAppBadge();
+    }
+  } catch {
+    // Badge API not supported
+  }
+}
+
 // Push notification handler
 self.addEventListener("push", (event) => {
   let data = {};
@@ -80,15 +104,7 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     (async () => {
       await self.registration.showNotification(title, options);
-      // Increment app badge count
-      if ("setAppBadge" in self.navigator) {
-        try {
-          const notifications = await self.registration.getNotifications();
-          await self.navigator.setAppBadge(notifications.length);
-        } catch {
-          // Badge API not supported
-        }
-      }
+      await updateBadge();
     })()
   );
 });
@@ -99,6 +115,7 @@ self.addEventListener("notificationclick", (event) => {
 
   // Dismiss action — just close
   if (event.action === "dismiss") {
+    event.waitUntil(updateBadge());
     return;
   }
 
@@ -120,6 +137,7 @@ self.addEventListener("notificationclick", (event) => {
           if ("focus" in client && "navigate" in client) {
             await client.focus();
             await client.navigate(targetUrl);
+            await updateBadge();
             return;
           }
         }
@@ -129,27 +147,35 @@ self.addEventListener("notificationclick", (event) => {
   );
 });
 
-// Notification close — badge stays as-is
-self.addEventListener("notificationclose", () => {
-  // Badge represents pending events, not notification count
+// Notification close
+self.addEventListener("notificationclose", (event) => {
+  event.waitUntil(updateBadge());
 });
 
 // Handle messages from the app
 self.addEventListener("message", (event) => {
-  if (event.data === "closeNotifications") {
-    // Close notification banners only — badge stays until user views events
+  if (event.data === "closeTransientNotifications") {
+    // Close offline + test notifications on app open, keep event notifications.
+    // Badge updates to reflect only remaining event notifications.
     event.waitUntil(
       (async () => {
         const notifications = await self.registration.getNotifications();
-        notifications.forEach((notification) => notification.close());
+        for (const notification of notifications) {
+          if (isTransientTag(notification.tag)) {
+            notification.close();
+          }
+        }
+        await updateBadge();
       })()
     );
   }
 
-  if (event.data === "clearBadge") {
-    // Clear app badge count (called when user views events tab)
+  if (event.data === "clearAllNotifications") {
+    // Clear everything — called when user views the events page.
     event.waitUntil(
       (async () => {
+        const notifications = await self.registration.getNotifications();
+        notifications.forEach((notification) => notification.close());
         if ("clearAppBadge" in self.navigator) {
           try {
             await self.navigator.clearAppBadge();

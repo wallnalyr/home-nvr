@@ -55,9 +55,9 @@ export function useLastSeenEventTime() {
       notifyListeners();
     }
 
-    // Clear PWA app badge
+    // Clear all notifications and badge (user is viewing events)
     if ("serviceWorker" in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage("clearBadge");
+      navigator.serviceWorker.controller.postMessage("clearAllNotifications");
     }
     if ("clearAppBadge" in navigator) {
       (navigator as Navigator & { clearAppBadge: () => Promise<void> })
