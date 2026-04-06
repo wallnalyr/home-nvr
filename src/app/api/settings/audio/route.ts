@@ -42,18 +42,12 @@ export async function PUT(request: NextRequest) {
     const added = enabledAudio.filter((a) => !prevEnabled.includes(a));
     const removed = prevEnabled.filter((a) => !enabledAudio.includes(a));
 
-    // Save global setting
-    if (enabledAudio.length === 0) {
-      await prisma.systemConfig.deleteMany({
-        where: { key: SETTINGS_KEY },
-      });
-    } else {
-      await prisma.systemConfig.upsert({
-        where: { key: SETTINGS_KEY },
-        update: { value: JSON.stringify(enabledAudio) },
-        create: { key: SETTINGS_KEY, value: JSON.stringify(enabledAudio) },
-      });
-    }
+    // Save global setting (always upsert, even for empty arrays)
+    await prisma.systemConfig.upsert({
+      where: { key: SETTINGS_KEY },
+      update: { value: JSON.stringify(enabledAudio) },
+      create: { key: SETTINGS_KEY, value: JSON.stringify(enabledAudio) },
+    });
 
     // Sync to all cameras: add newly enabled labels, remove disabled ones
     if (added.length > 0 || removed.length > 0) {

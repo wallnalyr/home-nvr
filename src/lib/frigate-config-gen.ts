@@ -2,7 +2,7 @@ import yaml from "js-yaml";
 import os from "os";
 import { prisma } from "@/lib/db";
 import { detectGPU, detectCoral, resolveDetectorType } from "@/lib/hardware-detect";
-import { getObjectById } from "@/lib/objects";
+import { getObjectById, DEFAULT_ENABLED_OBJECTS, DEFAULT_ENABLED_AUDIO } from "@/lib/objects";
 import { writeFile } from "fs/promises";
 
 /**
@@ -40,6 +40,21 @@ export async function generateFrigateConfig(): Promise<string> {
     include: { zones: true },
     orderBy: { sortOrder: "asc" },
   });
+
+  // Load globally enabled objects and audio labels
+  const objectsRow = await prisma.systemConfig.findUnique({
+    where: { key: "enabled_objects" },
+  });
+  const globalObjects = new Set<string>(
+    objectsRow ? JSON.parse(objectsRow.value) : DEFAULT_ENABLED_OBJECTS
+  );
+
+  const audioRow = await prisma.systemConfig.findUnique({
+    where: { key: "enabled_audio" },
+  });
+  const globalAudio = new Set<string>(
+    audioRow ? JSON.parse(audioRow.value) : DEFAULT_ENABLED_AUDIO
+  );
 
   const gpu = detectGPU();
   const coral = detectCoral();
@@ -125,7 +140,7 @@ export async function generateFrigateConfig(): Promise<string> {
     const objects = camera.objectsTrack
       .split(",")
       .map((o) => o.trim())
-      .filter(Boolean)
+      .filter((o) => o && globalObjects.has(o))
       .filter((o) => {
         // Strip Frigate+ only objects when the plus model isn't active
         const def = getObjectById(o);
@@ -135,7 +150,7 @@ export async function generateFrigateConfig(): Promise<string> {
     const audioLabels = camera.audioDetect
       .split(",")
       .map((a) => a.trim())
-      .filter(Boolean);
+      .filter((a) => a && globalAudio.has(a));
     const hasAudio = audioLabels.length > 0;
 
     // Main stream roles: always "record", plus "audio" if audio detection is on.
@@ -222,7 +237,7 @@ export async function generateFrigateConfig(): Promise<string> {
         const zoneObjects = zone.objects
           .split(",")
           .map((o) => o.trim())
-          .filter(Boolean);
+          .filter((o) => o && globalObjects.has(o));
         zones[zone.name] = {
           coordinates: zone.coordinates,
           objects: zoneObjects,

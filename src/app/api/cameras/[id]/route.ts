@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { DEFAULT_ENABLED_OBJECTS, DEFAULT_ENABLED_AUDIO } from "@/lib/objects";
 import { z } from "zod/v4";
 
 const CAMERA_NAME_REGEX = /^[a-zA-Z0-9 _\-'.]+$/;
@@ -87,6 +88,36 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const updateData: Record<string, unknown> = { ...data };
     if (data.name) {
       updateData.slug = toSlug(data.name);
+    }
+
+    // Filter objectsTrack against globally enabled objects
+    if (data.objectsTrack) {
+      const objectsRow = await prisma.systemConfig.findUnique({
+        where: { key: "enabled_objects" },
+      });
+      const globalObjects = new Set<string>(
+        objectsRow ? JSON.parse(objectsRow.value) : DEFAULT_ENABLED_OBJECTS
+      );
+      updateData.objectsTrack = data.objectsTrack
+        .split(",")
+        .map((o) => o.trim())
+        .filter((o) => o && globalObjects.has(o))
+        .join(",");
+    }
+
+    // Filter audioDetect against globally enabled audio labels
+    if (data.audioDetect) {
+      const audioRow = await prisma.systemConfig.findUnique({
+        where: { key: "enabled_audio" },
+      });
+      const globalAudio = new Set<string>(
+        audioRow ? JSON.parse(audioRow.value) : DEFAULT_ENABLED_AUDIO
+      );
+      updateData.audioDetect = data.audioDetect
+        .split(",")
+        .map((a) => a.trim())
+        .filter((a) => a && globalAudio.has(a))
+        .join(",");
     }
 
     const camera = await prisma.camera.update({
