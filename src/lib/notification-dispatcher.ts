@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { webpush } from "@/lib/webpush";
 import { getFrigateEventSnapshot } from "@/lib/frigate-client";
-import { getAudioLabelById } from "@/lib/objects";
+import { getAudioLabelById, DEFAULT_ENABLED_OBJECTS, DEFAULT_ENABLED_AUDIO } from "@/lib/objects";
 import type { NotificationPayload } from "@/types/notification";
 
 // Cooldown tracking: camera -> last notification timestamp
@@ -82,6 +82,32 @@ export async function handleFrigateEvent(payload: unknown) {
   if (!camera) {
     console.log(
       `[Notification] Skipped: camera "${cameraName}" not found, disabled, or notifications off`
+    );
+    return;
+  }
+
+  // Check global enabled_objects setting
+  const objectsRow = await prisma.systemConfig.findUnique({
+    where: { key: "enabled_objects" },
+  });
+  const globalObjects: string[] = objectsRow
+    ? JSON.parse(objectsRow.value)
+    : DEFAULT_ENABLED_OBJECTS;
+  if (!globalObjects.includes(label)) {
+    console.log(
+      `[Notification] Skipped: "${label}" not globally enabled`
+    );
+    return;
+  }
+
+  // Check per-camera objectsTrack
+  const cameraObjects = camera.objectsTrack
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (!cameraObjects.includes(label)) {
+    console.log(
+      `[Notification] Skipped: "${label}" not tracked by camera "${cameraName}"`
     );
     return;
   }
@@ -294,6 +320,28 @@ async function handleAudioEvent(payload: AudioEventPayload) {
     where: { slug: cameraName, enabled: true, notifyEnabled: true },
   });
   if (!camera) return;
+
+  // Check global enabled_audio setting
+  const audioSettingsRow = await prisma.systemConfig.findUnique({
+    where: { key: "enabled_audio" },
+  });
+  const globalAudio: string[] = audioSettingsRow
+    ? JSON.parse(audioSettingsRow.value)
+    : DEFAULT_ENABLED_AUDIO;
+  if (!globalAudio.includes(label)) {
+    console.log(`[Notification] Audio skipped: "${label}" not globally enabled`);
+    return;
+  }
+
+  // Check per-camera audioDetect
+  const cameraAudio = camera.audioDetect
+    .split(",")
+    .map((a) => a.trim())
+    .filter(Boolean);
+  if (!cameraAudio.includes(label)) {
+    console.log(`[Notification] Audio skipped: "${label}" not in camera "${cameraName}" audio list`);
+    return;
+  }
 
   // Check audio cooldown (per camera+label)
   const cooldownKey = `${cameraName}-${label}`;

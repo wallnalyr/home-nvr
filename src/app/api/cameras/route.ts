@@ -35,8 +35,8 @@ const createCameraSchema = z.object({
   detectWidth: z.number().int().min(320).max(3840).default(1280),
   detectHeight: z.number().int().min(240).max(2160).default(720),
   detectFps: z.number().int().min(1).max(30).default(5),
-  objectsTrack: z.string().default("person,car,cat,dog"),
-  audioDetect: z.string().default("fire_alarm,scream,bark,glass"),
+  objectsTrack: z.string().optional(),
+  audioDetect: z.string().optional(),
   recordEnabled: z.boolean().default(true),
   recordRetainDays: z.number().int().min(1).max(365).default(7),
   snapshotsEnabled: z.boolean().default(true),
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
     const slug = toSlug(data.name);
 
     // Default objectsTrack for new cameras from global setting
-    if (!body.objectsTrack) {
+    if (!data.objectsTrack) {
       const objectsRow = await prisma.systemConfig.findUnique({
         where: { key: "enabled_objects" },
       });
@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Default audioDetect for new cameras from global setting
-    if (!body.audioDetect) {
+    if (!data.audioDetect) {
       const audioRow = await prisma.systemConfig.findUnique({
         where: { key: "enabled_audio" },
       });
