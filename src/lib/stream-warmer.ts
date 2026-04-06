@@ -33,6 +33,7 @@ export interface CameraHealth {
   lastSeen: number;       // timestamp of last successful snapshot
   offlineSince: number | null;  // timestamp when camera went offline
   failCount: number;      // consecutive failures
+  recoveryCount: number;  // consecutive successes while offline
 }
 
 // Use globalThis to survive hot reloads in development
@@ -67,6 +68,7 @@ async function fetchSnapshot(slug: string): Promise<void> {
     lastSeen: now,
     offlineSince: null,
     failCount: 0,
+    recoveryCount: 0,
   };
 
   try {
@@ -86,16 +88,25 @@ async function fetchSnapshot(slug: string): Promise<void> {
       timestamp: now,
     });
 
-    // Camera recovered — reset notification cooldown so the next
-    // offline event notifies immediately
     if (!health.online) {
-      console.log(`[StreamWarmer] Camera "${slug}" is back online`);
-      offlineNotifiedAt.delete(slug);
+      // Camera was offline — require 3 consecutive successes before
+      // marking as recovered (mirrors the offline threshold)
+      health.recoveryCount++;
+      health.failCount = 0;
+      if (health.recoveryCount >= OFFLINE_THRESHOLD) {
+        health.online = true;
+        health.offlineSince = null;
+        health.recoveryCount = 0;
+        offlineNotifiedAt.delete(slug);
+        console.log(`[StreamWarmer] Camera "${slug}" is back online`);
+        sendOnlineNotification(slug).catch((err) => {
+          console.error("[StreamWarmer] Online notification failed:", err);
+        });
+      }
+    } else {
+      health.failCount = 0;
     }
-    health.online = true;
     health.lastSeen = now;
-    health.offlineSince = null;
-    health.failCount = 0;
     cameraHealth.set(slug, health);
   } catch {
     recordFailure(slug, health, now);
@@ -104,6 +115,7 @@ async function fetchSnapshot(slug: string): Promise<void> {
 
 function recordFailure(slug: string, health: CameraHealth, now: number): void {
   health.failCount++;
+  health.recoveryCount = 0;
 
   if (health.failCount >= OFFLINE_THRESHOLD && health.online) {
     // Transition to offline
@@ -181,6 +193,60 @@ async function sendOfflineNotification(slug: string): Promise<void> {
     );
   } catch (err) {
     console.error("[StreamWarmer] Failed to send offline notification:", err);
+  }
+}
+
+async function sendOnlineNotification(slug: string): Promise<void> {
+  try {
+    const { prisma } = await import("@/lib/db");
+
+    const camera = await prisma.camera.findFirst({
+      where: { slug, enabled: true, notifyEnabled: true },
+    });
+    if (!camera) return;
+
+    const { webpush } = await import("@/lib/webpush");
+    const subscriptions = await prisma.pushSubscription.findMany();
+    if (subscriptions.length === 0) return;
+
+    const payload = JSON.stringify({
+      title: `${camera.name} is back online`,
+      body: `Camera recovered at ${new Date().toLocaleTimeString([], { timeZone: process.env.TZ })}`,
+      icon: "/icon-192x192.png",
+      badge: "/badge-mono.png",
+      tag: `${slug}-offline`,
+      data: {
+        url: "/",
+        eventId: `online-${slug}-${Date.now()}`,
+        camera: slug,
+        objectType: "camera_online",
+      },
+    });
+
+    let sentCount = 0;
+    for (const sub of subscriptions) {
+      try {
+        await webpush.sendNotification(
+          {
+            endpoint: sub.endpoint,
+            keys: { p256dh: sub.p256dh, auth: sub.auth },
+          },
+          payload
+        );
+        sentCount++;
+      } catch (error: unknown) {
+        const statusCode = (error as { statusCode?: number }).statusCode;
+        if (statusCode === 410 || statusCode === 404) {
+          await prisma.pushSubscription.delete({ where: { id: sub.id } });
+        }
+      }
+    }
+
+    console.log(
+      `[StreamWarmer] Sent ${sentCount} online notification(s) for "${slug}"`
+    );
+  } catch (err) {
+    console.error("[StreamWarmer] Failed to send online notification:", err);
   }
 }
 
