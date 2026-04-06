@@ -13,6 +13,7 @@
  */
 
 const GO2RTC_URL = process.env.FRIGATE_INTERNAL_URL || "http://frigate:1984";
+const FRIGATE_URL = process.env.FRIGATE_URL || "http://frigate:5000";
 const SNAPSHOT_INTERVAL_MS = 10000;
 const CAMERA_REFRESH_INTERVAL_MS = 30000;
 
@@ -209,7 +210,42 @@ async function refreshCameraList(): Promise<void> {
 }
 
 async function warmAll(): Promise<void> {
+  // Fetch snapshots (keeps streams warm + caches frames)
   await Promise.allSettled(activeSlugs.map(fetchSnapshot));
+
+  // Cross-check with Frigate stats — go2rtc may serve cached frames
+  // for dead cameras, but Frigate's camera_fps drops to 0.
+  await checkFrigateStats();
+}
+
+async function checkFrigateStats(): Promise<void> {
+  try {
+    const res = await fetch(`${FRIGATE_URL}/api/stats`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return;
+
+    const stats = await res.json();
+    const now = Date.now();
+
+    for (const slug of activeSlugs) {
+      const cameraStat = stats[slug];
+      if (!cameraStat) continue;
+
+      const health = cameraHealth.get(slug);
+      if (!health) continue;
+
+      // camera_fps === 0 means Frigate can't read frames from the source
+      const cameraFps = cameraStat.camera_fps ?? -1;
+      if (cameraFps === 0 && health.online) {
+        // Frigate says camera is down but go2rtc snapshot succeeded (cached frame).
+        // Increment failure count to trigger offline detection.
+        recordFailure(slug, health, now);
+      }
+    }
+  } catch {
+    // Frigate API unavailable — rely on go2rtc snapshot check alone
+  }
 }
 
 export function getCachedSnapshot(slug: string): CachedSnapshot | null {
