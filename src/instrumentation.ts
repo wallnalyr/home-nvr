@@ -11,6 +11,12 @@ export async function register() {
       });
     }, 10000);
 
+    // Start stream warmer (snapshot cache + camera health monitoring)
+    const { startStreamWarmer } = await import("@/lib/stream-warmer");
+    startStreamWarmer().catch((err) => {
+      console.error("[StreamWarmer] Failed to start:", err);
+    });
+
     // Start MQTT listener for Frigate events
     const { startMQTTListener, onFrigateEvent } = await import(
       "@/lib/mqtt-listener"
