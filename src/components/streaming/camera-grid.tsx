@@ -2,6 +2,7 @@
 
 import { CameraFeed } from "./camera-feed";
 import { useTodayEventCounts } from "@/hooks/use-today-event-counts";
+import { useCameraHealth } from "@/hooks/use-camera-health";
 import type { Camera } from "@/types/camera";
 
 interface CameraGridProps {
@@ -10,6 +11,7 @@ interface CameraGridProps {
 
 export function CameraGrid({ cameras }: CameraGridProps) {
   const eventCounts = useTodayEventCounts();
+  const health = useCameraHealth();
 
   if (cameras.length === 0) {
     return (
@@ -32,6 +34,7 @@ export function CameraGrid({ cameras }: CameraGridProps) {
           cameraName={camera.name}
           cameraSlug={camera.slug}
           eventCount={eventCounts[camera.slug] || 0}
+          serverOffline={health[camera.slug]?.online === false}
         />
       ))}
     </div>

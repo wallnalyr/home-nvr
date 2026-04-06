@@ -10,6 +10,7 @@ interface CameraFeedProps {
   cameraSlug: string;
   className?: string;
   eventCount?: number;
+  serverOffline?: boolean;
 }
 
 export const CameraFeed = memo(function CameraFeed({
@@ -17,10 +18,12 @@ export const CameraFeed = memo(function CameraFeed({
   cameraSlug,
   className,
   eventCount,
+  serverOffline,
 }: CameraFeedProps) {
   const { status, videoRef, retry, recover, setFullscreen } = useGo2rtcStream(cameraSlug);
 
-  const isLive = status === "live";
+  const isLive = status === "live" && !serverOffline;
+  const isOffline = serverOffline || status === "offline";
 
   // Unmute on native fullscreen, re-mute on exit
   useEffect(() => {
@@ -104,7 +107,14 @@ export const CameraFeed = memo(function CameraFeed({
             </span>
           )}
         </div>
-        {isLive ? (
+        {isOffline ? (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="h-2 w-2 rounded-full bg-red-500" />
+            <span className="text-[11px] font-semibold text-red-500 uppercase tracking-wider">
+              Offline
+            </span>
+          </div>
+        ) : isLive ? (
           <div className="flex items-center gap-1.5 shrink-0">
             <span className="h-2 w-2 rounded-full bg-green-500 live-pulse" />
             <span className="text-[11px] font-semibold text-green-500 uppercase tracking-wider">
@@ -128,8 +138,8 @@ export const CameraFeed = memo(function CameraFeed({
         role={isLive ? "button" : undefined}
         tabIndex={isLive ? 0 : undefined}
       >
-        {/* Loading spinner while connecting */}
-        {status === "connecting" && (
+        {/* Loading spinner while connecting (only when server says camera is up) */}
+        {status === "connecting" && !serverOffline && (
           <div className="absolute inset-0 flex items-center justify-center bg-black">
             <Loader2 className="h-8 w-8 animate-spin text-white/40" />
           </div>
@@ -147,8 +157,20 @@ export const CameraFeed = memo(function CameraFeed({
           )}
         />
 
-        {/* Offline — retry button */}
-        {status === "offline" && (
+        {/* Offline state — server confirmed camera is down */}
+        {isOffline && (
+          <button
+            onClick={handleRetry}
+            className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/90"
+          >
+            <VideoOff className="h-8 w-8 text-red-400/80" />
+            <span className="text-xs font-medium text-red-400/80">Camera offline</span>
+            <span className="text-[10px] text-white/40">Tap to retry</span>
+          </button>
+        )}
+
+        {/* Client-side offline (stream failed but server hasn't confirmed down) */}
+        {status === "offline" && !serverOffline && (
           <button
             onClick={handleRetry}
             className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black"
