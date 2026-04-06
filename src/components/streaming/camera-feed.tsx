@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { Loader2, VideoOff } from "lucide-react";
 import { useGo2rtcStream } from "@/hooks/use-go2rtc-stream";
@@ -24,6 +24,19 @@ export const CameraFeed = memo(function CameraFeed({
 
   const isLive = status === "live" && !serverOffline;
   const isOffline = serverOffline || status === "offline";
+
+  // Auto-retry when server health says camera is online but client gave up.
+  // Covers two cases:
+  // 1. Server transitions offline → online (camera recovered)
+  // 2. Client exhausted retries before server health data loaded
+  const prevServerOfflineRef = useRef<boolean | undefined>(serverOffline);
+  useEffect(() => {
+    const prev = prevServerOfflineRef.current;
+    prevServerOfflineRef.current = serverOffline;
+    if (serverOffline === false && prev !== false && status === "offline") {
+      retry();
+    }
+  }, [serverOffline, status, retry]);
 
   // Unmute on native fullscreen, re-mute on exit
   useEffect(() => {
