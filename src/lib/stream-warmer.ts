@@ -7,17 +7,17 @@
  * 1. Keeps the RTSP source active in go2rtc (no cold-start latency for viewers)
  * 2. Provides a cached snapshot for near-instant client display
  *
- * Camera health: tracks consecutive failures per camera. After
- * OFFLINE_THRESHOLD consecutive failures, marks the camera offline and
- * sends a push notification. When the camera recovers, marks it online.
+ * Camera health is determined by go2rtc's stream producer status. A camera
+ * is online when go2rtc has at least one active producer (RTSP source
+ * connected). This is the most reliable signal — it checks the actual
+ * RTSP connection, not inferred from FPS stats or cached frames.
  */
 
 const GO2RTC_URL = process.env.FRIGATE_INTERNAL_URL || "http://frigate:1984";
-const FRIGATE_URL = process.env.FRIGATE_URL || "http://frigate:5000";
 const SNAPSHOT_INTERVAL_MS = 10000;
 const CAMERA_REFRESH_INTERVAL_MS = 30000;
 
-// Camera is considered offline after 3 consecutive failures (~30s)
+// Camera is considered offline after 3 consecutive checks with no producers (~30s)
 const OFFLINE_THRESHOLD = 3;
 // Don't re-notify for the same camera going offline within 30 minutes
 const OFFLINE_NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
@@ -30,10 +30,10 @@ interface CachedSnapshot {
 
 export interface CameraHealth {
   online: boolean;
-  lastSeen: number;       // timestamp of last successful snapshot
+  lastSeen: number;       // timestamp of last successful producer check
   offlineSince: number | null;  // timestamp when camera went offline
-  failCount: number;      // consecutive failures
-  recoveryCount: number;  // consecutive successes while offline
+  failCount: number;      // consecutive checks with no producer
+  recoveryCount: number;  // consecutive checks with producer while offline
 }
 
 // Use globalThis to survive hot reloads in development
@@ -61,56 +61,91 @@ globalForWarmer.__offlineNotifiedAt = offlineNotifiedAt;
 
 let activeSlugs: string[] = globalForWarmer.__warmerSlugs ?? [];
 
-async function fetchSnapshot(slug: string): Promise<void> {
-  const now = Date.now();
-  const health = cameraHealth.get(slug) || {
-    online: true,
-    lastSeen: now,
-    offlineSince: null,
-    failCount: 0,
-    recoveryCount: 0,
-  };
+// --- Snapshot cache (keeps streams warm, no health logic) ---
 
+async function fetchSnapshot(slug: string): Promise<void> {
   try {
     const res = await fetch(
       `${GO2RTC_URL}/api/frame.jpeg?src=${encodeURIComponent(slug)}`,
       { signal: AbortSignal.timeout(5000) }
     );
-    if (!res.ok) {
-      recordFailure(slug, health, now);
-      return;
-    }
+    if (!res.ok) return;
 
     const buffer = Buffer.from(await res.arrayBuffer());
     snapshotCache.set(slug, {
       buffer,
       contentType: res.headers.get("content-type") || "image/jpeg",
-      timestamp: now,
+      timestamp: Date.now(),
     });
-
-    if (!health.online) {
-      // Camera was offline — require 3 consecutive successes before
-      // marking as recovered (mirrors the offline threshold)
-      health.recoveryCount++;
-      health.failCount = 0;
-      if (health.recoveryCount >= OFFLINE_THRESHOLD) {
-        health.online = true;
-        health.offlineSince = null;
-        health.recoveryCount = 0;
-        offlineNotifiedAt.delete(slug);
-        console.log(`[StreamWarmer] Camera "${slug}" is back online`);
-        sendOnlineNotification(slug).catch((err) => {
-          console.error("[StreamWarmer] Online notification failed:", err);
-        });
-      }
-    } else {
-      health.failCount = 0;
-    }
-    health.lastSeen = now;
-    cameraHealth.set(slug, health);
   } catch {
-    recordFailure(slug, health, now);
+    // go2rtc unavailable or timeout — keep existing cached frame
   }
+}
+
+// --- Health detection via go2rtc stream producers ---
+
+async function checkStreamHealth(): Promise<void> {
+  let streams: Record<string, { producers?: unknown[] }>;
+  try {
+    const res = await fetch(`${GO2RTC_URL}/api/streams`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return;
+    streams = await res.json();
+  } catch {
+    // go2rtc unavailable — skip health check this cycle
+    return;
+  }
+
+  const now = Date.now();
+
+  for (const slug of activeSlugs) {
+    const stream = streams[slug];
+    const health = cameraHealth.get(slug) || {
+      online: true,
+      lastSeen: now,
+      offlineSince: null,
+      failCount: 0,
+      recoveryCount: 0,
+    };
+
+    // A stream has active producers when the RTSP source is connected.
+    // No stream entry at all means go2rtc hasn't loaded the config yet — skip.
+    if (!stream) {
+      cameraHealth.set(slug, health);
+      continue;
+    }
+
+    const hasProducers = Array.isArray(stream.producers) && stream.producers.length > 0;
+
+    if (hasProducers) {
+      recordSuccess(slug, health, now);
+    } else {
+      recordFailure(slug, health, now);
+    }
+  }
+}
+
+function recordSuccess(slug: string, health: CameraHealth, now: number): void {
+  if (!health.online) {
+    // Camera was offline — require consecutive successes before recovery
+    health.recoveryCount++;
+    health.failCount = 0;
+    if (health.recoveryCount >= OFFLINE_THRESHOLD) {
+      health.online = true;
+      health.offlineSince = null;
+      health.recoveryCount = 0;
+      offlineNotifiedAt.delete(slug);
+      console.log(`[StreamWarmer] Camera "${slug}" is back online`);
+      sendOnlineNotification(slug).catch((err) => {
+        console.error("[StreamWarmer] Online notification failed:", err);
+      });
+    }
+  } else {
+    health.failCount = 0;
+  }
+  health.lastSeen = now;
+  cameraHealth.set(slug, health);
 }
 
 function recordFailure(slug: string, health: CameraHealth, now: number): void {
@@ -118,13 +153,11 @@ function recordFailure(slug: string, health: CameraHealth, now: number): void {
   health.recoveryCount = 0;
 
   if (health.failCount >= OFFLINE_THRESHOLD && health.online) {
-    // Transition to offline
     health.online = false;
     health.offlineSince = now;
     console.log(
-      `[StreamWarmer] Camera "${slug}" is offline (${health.failCount} consecutive failures)`
+      `[StreamWarmer] Camera "${slug}" is offline (${health.failCount} consecutive checks with no producer)`
     );
-    // Fire notification asynchronously
     sendOfflineNotification(slug).catch((err) => {
       console.error("[StreamWarmer] Offline notification failed:", err);
     });
@@ -132,6 +165,8 @@ function recordFailure(slug: string, health: CameraHealth, now: number): void {
 
   cameraHealth.set(slug, health);
 }
+
+// --- Notifications ---
 
 async function sendOfflineNotification(slug: string): Promise<void> {
   const now = Date.now();
@@ -144,7 +179,6 @@ async function sendOfflineNotification(slug: string): Promise<void> {
   try {
     const { prisma } = await import("@/lib/db");
 
-    // Look up camera for display name and notification setting
     const camera = await prisma.camera.findFirst({
       where: { slug, enabled: true, notifyEnabled: true },
     });
@@ -250,6 +284,8 @@ async function sendOnlineNotification(slug: string): Promise<void> {
   }
 }
 
+// --- Camera list management ---
+
 async function refreshCameraList(): Promise<void> {
   try {
     const { prisma } = await import("@/lib/db");
@@ -277,43 +313,15 @@ async function refreshCameraList(): Promise<void> {
   }
 }
 
+// --- Main loop ---
+
 async function warmAll(): Promise<void> {
-  // Fetch snapshots (keeps streams warm + caches frames)
-  await Promise.allSettled(activeSlugs.map(fetchSnapshot));
-
-  // Cross-check with Frigate stats — go2rtc may serve cached frames
-  // for dead cameras, but Frigate's camera_fps drops to 0.
-  await checkFrigateStats();
-}
-
-async function checkFrigateStats(): Promise<void> {
-  try {
-    const res = await fetch(`${FRIGATE_URL}/api/stats`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return;
-
-    const stats = await res.json();
-    const now = Date.now();
-
-    for (const slug of activeSlugs) {
-      const cameraStat = stats[slug];
-      if (!cameraStat) continue;
-
-      const health = cameraHealth.get(slug);
-      if (!health) continue;
-
-      // camera_fps === 0 means Frigate can't read frames from the source
-      const cameraFps = cameraStat.camera_fps ?? -1;
-      if (cameraFps === 0 && health.online) {
-        // Frigate says camera is down but go2rtc snapshot succeeded (cached frame).
-        // Increment failure count to trigger offline detection.
-        recordFailure(slug, health, now);
-      }
-    }
-  } catch {
-    // Frigate API unavailable — rely on go2rtc snapshot check alone
-  }
+  await Promise.all([
+    // Snapshot cache (keeps streams warm)
+    Promise.allSettled(activeSlugs.map(fetchSnapshot)),
+    // Health check (producer status)
+    checkStreamHealth(),
+  ]);
 }
 
 export function getCachedSnapshot(slug: string): CachedSnapshot | null {
