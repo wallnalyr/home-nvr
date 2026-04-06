@@ -86,9 +86,11 @@ async function fetchSnapshot(slug: string): Promise<void> {
       timestamp: now,
     });
 
-    // Camera recovered
+    // Camera recovered — reset notification cooldown so the next
+    // offline event notifies immediately
     if (!health.online) {
       console.log(`[StreamWarmer] Camera "${slug}" is back online`);
+      offlineNotifiedAt.delete(slug);
     }
     health.online = true;
     health.lastSeen = now;
