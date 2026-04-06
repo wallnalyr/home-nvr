@@ -33,7 +33,7 @@ export const CameraFeed = memo(function CameraFeed({
   useEffect(() => {
     const prev = prevServerOfflineRef.current;
     prevServerOfflineRef.current = serverOffline;
-    if (serverOffline === false && prev !== false && status === "offline") {
+    if (serverOffline === false && prev !== false && status !== "live") {
       retry();
     }
   }, [serverOffline, status, retry]);
@@ -170,16 +170,12 @@ export const CameraFeed = memo(function CameraFeed({
           )}
         />
 
-        {/* Offline state — server confirmed camera is down */}
-        {isOffline && (
-          <button
-            onClick={handleRetry}
-            className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/90"
-          >
+        {/* Server-confirmed offline — auto-recovers via health poll, no manual retry */}
+        {serverOffline && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/90">
             <VideoOff className="h-8 w-8 text-red-400/80" />
             <span className="text-xs font-medium text-red-400/80">Camera offline</span>
-            <span className="text-[10px] text-white/40">Tap to retry</span>
-          </button>
+          </div>
         )}
 
         {/* Client-side offline (stream failed but server hasn't confirmed down) */}
