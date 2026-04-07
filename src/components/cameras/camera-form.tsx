@@ -270,12 +270,12 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label>Audio Detection</Label>
+            <Label htmlFor="audioEnabled">Audio</Label>
             <Switch
+              id="audioEnabled"
               checked={(form.audioDetect ?? "").split(",").filter(Boolean).length > 0}
               onCheckedChange={(enabled) => {
                 if (enabled) {
-                  // Re-enable with all globally enabled audio labels
                   update("audioDetect", enabledAudio.join(","));
                 } else {
                   update("audioDetect", "");
@@ -283,7 +283,12 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
               }}
             />
           </div>
+          <p className="text-xs text-muted-foreground">
+            Disables audio for live view, recording, and detection
+          </p>
           {(form.audioDetect ?? "").split(",").filter(Boolean).length > 0 && (
+          <div className="space-y-1.5">
+          <Label className="text-xs">Detection Labels</Label>
           <div className="flex flex-wrap gap-1.5">
             {enabledAudio.map((audioId) => {
               const tracked = (form.audioDetect ?? "")
@@ -323,6 +328,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
                 </button>
               );
             })}
+          </div>
           </div>
           )}
         </div>
