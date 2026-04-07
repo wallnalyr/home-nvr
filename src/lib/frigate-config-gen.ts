@@ -125,13 +125,20 @@ export async function generateFrigateConfig(): Promise<string> {
     // Use slug as the Frigate camera identifier (no spaces, lowercase)
     const cameraId = camera.slug;
 
+    const audioLabels = camera.audioDetect
+      .split(",")
+      .map((a) => a.trim())
+      .filter((a) => a && globalAudio.has(a));
+    const hasAudio = audioLabels.length > 0;
+
     // go2rtc streams — main stream always, sub stream as separate entry.
-    // The ffmpeg source transcodes audio to Opus on demand for Safari/iOS
-    // WebRTC compatibility (many cameras output G.711 which Safari rejects).
-    config.go2rtc.streams[cameraId] = [
-      camera.rtspUrl,
-      `ffmpeg:${cameraId}#audio=opus`,
-    ];
+    // Only add the Opus transcode source when audio is enabled for this camera.
+    const go2rtcSources: string[] = [camera.rtspUrl];
+    if (hasAudio) {
+      // Transcodes audio to Opus on demand for Safari/iOS WebRTC compatibility
+      go2rtcSources.push(`ffmpeg:${cameraId}#audio=opus`);
+    }
+    config.go2rtc.streams[cameraId] = go2rtcSources;
     if (camera.rtspSubUrl) {
       config.go2rtc.streams[`${cameraId}_sub`] = [camera.rtspSubUrl];
     }
@@ -146,12 +153,6 @@ export async function generateFrigateConfig(): Promise<string> {
         const def = getObjectById(o);
         return !def?.plusOnly || plusModelActive;
       });
-
-    const audioLabels = camera.audioDetect
-      .split(",")
-      .map((a) => a.trim())
-      .filter((a) => a && globalAudio.has(a));
-    const hasAudio = audioLabels.length > 0;
 
     // Main stream roles: always "record", plus "audio" if audio detection is on.
     // If no sub stream, main stream also handles "detect".
@@ -222,11 +223,15 @@ export async function generateFrigateConfig(): Promise<string> {
       },
     };
 
-    // Audio detection (per-camera)
+    // Audio: explicitly enabled with labels, or explicitly disabled
     if (hasAudio) {
       cameraConfig.audio = {
         enabled: true,
         listen: audioLabels,
+      };
+    } else {
+      cameraConfig.audio = {
+        enabled: false,
       };
     }
 
