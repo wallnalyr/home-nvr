@@ -36,8 +36,8 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
   const { enabledAudio } = useEnabledAudio();
   const [form, setForm] = useState<CameraFormData>({
     name: camera?.name || "",
-    rtspUrl: "",
-    rtspSubUrl: "",
+    rtspUrl: camera?.rtspUrl || "",
+    rtspSubUrl: camera?.rtspSubUrl || "",
     enabled: camera?.enabled ?? true,
     detectEnabled: camera?.detectEnabled ?? true,
     detectWidth: camera?.detectWidth ?? 1280,
@@ -269,7 +269,21 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
         </div>
 
         <div className="space-y-2">
-          <Label>Audio Detection</Label>
+          <div className="flex items-center justify-between">
+            <Label>Audio Detection</Label>
+            <Switch
+              checked={(form.audioDetect ?? "").split(",").filter(Boolean).length > 0}
+              onCheckedChange={(enabled) => {
+                if (enabled) {
+                  // Re-enable with all globally enabled audio labels
+                  update("audioDetect", enabledAudio.join(","));
+                } else {
+                  update("audioDetect", "");
+                }
+              }}
+            />
+          </div>
+          {(form.audioDetect ?? "").split(",").filter(Boolean).length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {enabledAudio.map((audioId) => {
               const tracked = (form.audioDetect ?? "")
@@ -310,9 +324,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
               );
             })}
           </div>
-          <p className="text-xs text-muted-foreground">
-            Disable all to turn off audio detection for this camera
-          </p>
+          )}
         </div>
       </div>
 

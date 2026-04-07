@@ -53,12 +53,6 @@ const updateCameraSchema = z.object({
   sortOrder: z.number().int().min(0).optional(),
 });
 
-function stripRtspUrls<T extends Record<string, unknown>>(camera: T): Omit<T, "rtspUrl" | "rtspSubUrl"> {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { rtspUrl: _r, rtspSubUrl: _s, ...safe } = camera;
-  return safe as Omit<T, "rtspUrl" | "rtspSubUrl">;
-}
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_request: NextRequest, context: RouteContext) {
@@ -73,7 +67,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   }
 
   return NextResponse.json({
-    ...stripRtspUrls(camera),
+    ...camera,
     hasSubStream: !!camera.rtspSubUrl,
   });
 }
@@ -139,7 +133,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     refreshWarmerCameras();
 
     const response: Record<string, unknown> = {
-      ...stripRtspUrls(camera),
+      ...camera,
       hasSubStream: !!camera.rtspSubUrl,
     };
     if (configWarning) {
