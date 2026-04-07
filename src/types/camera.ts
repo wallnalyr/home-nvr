@@ -2,6 +2,8 @@ export interface Camera {
   id: string;
   name: string;
   slug: string;
+  rtspUrl: string;
+  rtspSubUrl: string | null;
   hasSubStream?: boolean;
   enabled: boolean;
   detectEnabled: boolean;

@@ -1,14 +1,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { ArrowUpDown, Plus } from "lucide-react";
+import { ArrowUpDown, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { CameraList } from "@/components/cameras/camera-list";
 import { CameraForm } from "@/components/cameras/camera-form";
 import { useCameras } from "@/hooks/use-cameras";
@@ -24,7 +18,7 @@ import {
 
 export default function CamerasPage() {
   const { cameras, mutate } = useCameras();
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [addingCamera, setAddingCamera] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteCamera, setDeleteCamera] = useState<Camera | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -33,7 +27,6 @@ export default function CamerasPage() {
   const moveCamera = useCallback(async (index: number, direction: -1 | 1) => {
     const target = index + direction;
     if (target < 0 || target >= cameras.length) return;
-    // Swap sortOrder between the two cameras
     const a = cameras[index];
     const b = cameras[target];
     await Promise.all([
@@ -62,7 +55,7 @@ export default function CamerasPage() {
       throw new Error(err.error || "Failed to add camera");
     }
     await mutate();
-    setSheetOpen(false);
+    setAddingCamera(false);
   };
 
   const handleEdit = async (data: CameraFormData) => {
@@ -113,42 +106,53 @@ export default function CamerasPage() {
               {reorderMode ? "Done" : "Reorder"}
             </Button>
           )}
-          {!reorderMode && (
+          {!reorderMode && !addingCamera && (
             <Button
               size="sm"
               className="gap-1 h-9 rounded-lg"
-              onClick={() => setSheetOpen(true)}
+              onClick={() => { setAddingCamera(true); setEditingId(null); }}
             >
               <Plus className="h-4 w-4" />
               Add
             </Button>
           )}
+          {addingCamera && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="gap-1 h-9 rounded-lg"
+              onClick={() => setAddingCamera(false)}
+            >
+              <X className="h-4 w-4" />
+              Cancel
+            </Button>
+          )}
         </div>
       </div>
+
+      {/* Inline Add Camera Form */}
+      {addingCamera && (
+        <div className="mx-4 mb-4 rounded-2xl bg-card shadow-sm overflow-hidden">
+          <div className="px-4 pt-3 pb-1">
+            <h3 className="text-sm font-semibold">Add Camera</h3>
+          </div>
+          <CameraForm
+            onSubmit={handleAdd}
+            onCancel={() => setAddingCamera(false)}
+          />
+        </div>
+      )}
 
       <CameraList
         cameras={cameras}
         editingId={reorderMode ? null : editingId}
-        onEdit={(cam) => setEditingId(cam.id)}
+        onEdit={(cam) => { setEditingId(cam.id); setAddingCamera(false); }}
         onCancelEdit={() => setEditingId(null)}
         onSubmitEdit={handleEdit}
         onDelete={setDeleteCamera}
         reorderMode={reorderMode}
         onMove={moveCamera}
       />
-
-      {/* Add Camera Sheet */}
-      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent side="bottom" className="max-h-[90dvh] overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Add Camera</SheetTitle>
-          </SheetHeader>
-          <CameraForm
-            onSubmit={handleAdd}
-            onCancel={() => setSheetOpen(false)}
-          />
-        </SheetContent>
-      </Sheet>
 
       {/* Delete Confirmation */}
       <Dialog

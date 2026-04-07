@@ -47,12 +47,6 @@ const createCameraSchema = z.object({
   sortOrder: z.number().int().min(0).default(0),
 });
 
-function stripRtspUrls<T extends Record<string, unknown>>(camera: T): Omit<T, "rtspUrl" | "rtspSubUrl"> {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { rtspUrl: _r, rtspSubUrl: _s, ...safe } = camera;
-  return safe as Omit<T, "rtspUrl" | "rtspSubUrl">;
-}
-
 export async function GET() {
   const cameras = await prisma.camera.findMany({
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -60,7 +54,7 @@ export async function GET() {
   });
   return NextResponse.json(
     cameras.map((cam) => ({
-      ...stripRtspUrls(cam),
+      ...cam,
       hasSubStream: !!cam.rtspSubUrl,
     }))
   );
@@ -110,7 +104,7 @@ export async function POST(request: NextRequest) {
     refreshWarmerCameras();
 
     return NextResponse.json(
-      { ...stripRtspUrls(camera), hasSubStream: !!data.rtspSubUrl },
+      { ...camera, hasSubStream: !!data.rtspSubUrl },
       { status: 201 }
     );
   } catch (error) {
