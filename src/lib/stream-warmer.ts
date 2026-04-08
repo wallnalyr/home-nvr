@@ -147,25 +147,28 @@ async function checkStreamHealth(): Promise<void> {
 }
 
 /**
- * Restart a go2rtc stream by deleting and re-requesting it.
- * This forces go2rtc to re-establish the RTSP connection from scratch.
+ * Restart a go2rtc stream by pushing a fresh Frigate config.
+ * This triggers a Frigate restart which reinitializes go2rtc with
+ * all stream definitions — the same thing a server restart does.
+ *
+ * We batch this: if multiple cameras are offline, one config push
+ * restarts all streams. The flag prevents redundant pushes within
+ * the same cycle.
  */
+let configPushPending = false;
+
 async function restartStream(slug: string): Promise<void> {
+  if (configPushPending) return;
+  configPushPending = true;
+
   try {
-    // Delete the stream — go2rtc drops the stale connection
-    await fetch(
-      `${GO2RTC_URL}/api/streams?src=${encodeURIComponent(slug)}`,
-      { method: "DELETE", signal: AbortSignal.timeout(3000) }
-    );
-    // Request a frame — go2rtc recreates the stream from its config
-    // and attempts a fresh RTSP connection
-    await fetch(
-      `${GO2RTC_URL}/api/frame.jpeg?src=${encodeURIComponent(slug)}`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    console.log(`[StreamWarmer] Restarted stream for "${slug}"`);
-  } catch {
-    // go2rtc unavailable — will retry next cycle
+    const { regenerateFrigateConfig } = await import("@/lib/frigate-config-gen");
+    await regenerateFrigateConfig();
+    console.log(`[StreamWarmer] Pushed config to restart streams (triggered by "${slug}")`);
+  } catch (err) {
+    console.error("[StreamWarmer] Config push for stream restart failed:", err);
+  } finally {
+    configPushPending = false;
   }
 }
 
@@ -178,12 +181,16 @@ function recordSuccess(slug: string, health: CameraHealth, now: number): void {
       health.online = true;
       health.offlineSince = null;
       health.recoveryCount = 0;
+      // Only send "back online" notification if we previously sent an offline one
+      const wasNotified = offlineNotifiedAt.has(slug);
       offlineNotifiedAt.delete(slug);
       lastRestartAttempt.delete(slug);
       console.log(`[StreamWarmer] Camera "${slug}" is back online`);
-      sendOnlineNotification(slug).catch((err) => {
-        console.error("[StreamWarmer] Online notification failed:", err);
-      });
+      if (wasNotified) {
+        sendOnlineNotification(slug).catch((err) => {
+          console.error("[StreamWarmer] Online notification failed:", err);
+        });
+      }
     }
   } else {
     health.failCount = 0;
