@@ -1,9 +1,12 @@
 "use client";
 
-import { memo, useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Loader2, VideoOff } from "lucide-react";
 import { useGo2rtcStream } from "@/hooks/use-go2rtc-stream";
+
+// Show last snapshot with small spinner for this long before full offline state
+const GRACE_PERIOD_MS = 15000;
 
 interface CameraFeedProps {
   cameraName: string;
@@ -23,12 +26,49 @@ export const CameraFeed = memo(function CameraFeed({
   const { status, videoRef, retry, recover, setFullscreen } = useGo2rtcStream(cameraSlug);
 
   const isLive = status === "live" && !serverOffline;
-  const isOffline = serverOffline || status === "offline";
 
-  // Auto-retry when server health says camera is online but client gave up.
-  // Covers two cases:
-  // 1. Server transitions offline → online (camera recovered)
-  // 2. Client exhausted retries before server health data loaded
+  // Track whether the stream was ever live — used to decide if we have
+  // a snapshot to show during interruptions
+  const wasLiveRef = useRef(false);
+  if (isLive) wasLiveRef.current = true;
+
+  // Grace period: when stream drops, show last frame + small spinner
+  // for GRACE_PERIOD_MS before switching to full offline state
+  const [graceExpired, setGraceExpired] = useState(false);
+  const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (isLive) {
+      // Stream is live — clear any grace timer and reset
+      if (graceTimerRef.current) {
+        clearTimeout(graceTimerRef.current);
+        graceTimerRef.current = null;
+      }
+      setGraceExpired(false);
+    } else if (wasLiveRef.current && !graceExpired && !graceTimerRef.current) {
+      // Stream just dropped after being live — start grace period
+      graceTimerRef.current = setTimeout(() => {
+        graceTimerRef.current = null;
+        setGraceExpired(true);
+      }, GRACE_PERIOD_MS);
+    }
+
+    return () => {
+      if (graceTimerRef.current) {
+        clearTimeout(graceTimerRef.current);
+        graceTimerRef.current = null;
+      }
+    };
+  }, [isLive, graceExpired]);
+
+  // During grace period: show snapshot background with small spinner
+  const inGracePeriod = !isLive && wasLiveRef.current && !graceExpired;
+  // Full offline state: grace period expired or server confirmed offline
+  const showFullOffline = serverOffline && !inGracePeriod;
+  const showClientOffline = status === "offline" && !serverOffline && !inGracePeriod;
+  const showFullSpinner = status === "connecting" && !serverOffline && !inGracePeriod;
+
+  // Auto-retry when server health says camera is online but client gave up
   const prevServerOfflineRef = useRef<boolean | undefined>(serverOffline);
   useEffect(() => {
     const prev = prevServerOfflineRef.current;
@@ -64,7 +104,6 @@ export const CameraFeed = memo(function CameraFeed({
       setFullscreen(true);
     };
 
-    // iOS fires on the video element, others on document
     video.addEventListener("webkitendfullscreen", onIOSEnd);
     video.addEventListener("webkitbeginfullscreen", onIOSBegin);
     document.addEventListener("fullscreenchange", onFullscreenChange);
@@ -82,17 +121,12 @@ export const CameraFeed = memo(function CameraFeed({
     const video = videoRef.current;
     if (!video) return;
 
-    // Unmute immediately within the user gesture so the browser allows it.
-    // The fullscreenchange listener is async and may be outside gesture context.
     video.muted = false;
 
-    // Enter native fullscreen on the video element
     if ("webkitEnterFullscreen" in video) {
-      // iOS Safari — native video fullscreen
       (video as HTMLVideoElement & { webkitEnterFullscreen: () => void }).webkitEnterFullscreen();
     } else if (video.requestFullscreen) {
       video.requestFullscreen().catch(() => {
-        // Fullscreen denied — re-mute since we're still in grid view
         video.muted = true;
       });
     }
@@ -120,7 +154,7 @@ export const CameraFeed = memo(function CameraFeed({
             </span>
           )}
         </div>
-        {isOffline ? (
+        {showFullOffline ? (
           <div className="flex items-center gap-1.5 shrink-0">
             <span className="h-2 w-2 rounded-full bg-red-500" />
             <span className="text-[11px] font-semibold text-red-500 uppercase tracking-wider">
@@ -132,6 +166,13 @@ export const CameraFeed = memo(function CameraFeed({
             <span className="h-2 w-2 rounded-full bg-green-500 live-pulse" />
             <span className="text-[11px] font-semibold text-green-500 uppercase tracking-wider">
               Live
+            </span>
+          </div>
+        ) : inGracePeriod ? (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+            <span className="text-[11px] font-medium text-amber-500">
+              Reconnecting
             </span>
           </div>
         ) : status === "connecting" ? (
@@ -151,14 +192,29 @@ export const CameraFeed = memo(function CameraFeed({
         role={isLive ? "button" : undefined}
         tabIndex={isLive ? 0 : undefined}
       >
-        {/* Loading spinner while connecting (only when server says camera is up) */}
-        {status === "connecting" && !serverOffline && (
+        {/* Grace period: last snapshot + small spinner overlay */}
+        {inGracePeriod && (
+          <div className="absolute inset-0 bg-black">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`/api/go2rtc/frame?src=${encodeURIComponent(cameraSlug)}`}
+              alt=""
+              className="absolute inset-0 w-full h-full object-contain opacity-70"
+            />
+            <div className="absolute bottom-2 right-2">
+              <Loader2 className="h-4 w-4 animate-spin text-white/70" />
+            </div>
+          </div>
+        )}
+
+        {/* Full loading spinner (no snapshot available or grace expired) */}
+        {showFullSpinner && (
           <div className="absolute inset-0 flex items-center justify-center bg-black">
             <Loader2 className="h-8 w-8 animate-spin text-white/40" />
           </div>
         )}
 
-        {/* Live video stream — always muted in grid, unmuted in native fullscreen */}
+        {/* Live video stream */}
         <video
           ref={videoRef}
           autoPlay
@@ -170,16 +226,16 @@ export const CameraFeed = memo(function CameraFeed({
           )}
         />
 
-        {/* Server-confirmed offline — auto-recovers via health poll, no manual retry */}
-        {serverOffline && (
+        {/* Server-confirmed offline — auto-recovers via health poll */}
+        {showFullOffline && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/90">
             <VideoOff className="h-8 w-8 text-red-400/80" />
             <span className="text-xs font-medium text-red-400/80">Camera offline</span>
           </div>
         )}
 
-        {/* Client-side offline (stream failed but server hasn't confirmed down) */}
-        {status === "offline" && !serverOffline && (
+        {/* Client-side offline (server hasn't confirmed down) */}
+        {showClientOffline && (
           <button
             onClick={handleRetry}
             className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black"
