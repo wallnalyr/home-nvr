@@ -23,6 +23,8 @@ const OFFLINE_THRESHOLD = 3;
 const OFFLINE_NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
 // Try to restart a dead go2rtc stream every 60 seconds
 const STREAM_RESTART_INTERVAL_MS = 60000;
+// Only notify after camera has been offline for this long (gives restarts time to work)
+const OFFLINE_NOTIFY_DELAY_MS = 3 * 60 * 1000; // 3 minutes
 
 interface CachedSnapshot {
   buffer: Buffer;
@@ -195,14 +197,26 @@ function recordFailure(slug: string, health: CameraHealth, now: number): void {
   health.recoveryCount = 0;
 
   if (health.failCount >= OFFLINE_THRESHOLD && health.online) {
+    // Mark offline for UI immediately — notification is delayed
     health.online = false;
     health.offlineSince = now;
     console.log(
       `[StreamWarmer] Camera "${slug}" is offline (${health.failCount} consecutive checks with no producer)`
     );
-    sendOfflineNotification(slug).catch((err) => {
-      console.error("[StreamWarmer] Offline notification failed:", err);
-    });
+  }
+
+  // Only notify after the camera has been down long enough for restart
+  // attempts to have had a chance to fix it
+  if (!health.online && health.offlineSince) {
+    const downDuration = now - health.offlineSince;
+    if (downDuration >= OFFLINE_NOTIFY_DELAY_MS) {
+      const lastNotified = offlineNotifiedAt.get(slug) || 0;
+      if (now - lastNotified >= OFFLINE_NOTIFY_COOLDOWN_MS) {
+        sendOfflineNotification(slug).catch((err) => {
+          console.error("[StreamWarmer] Offline notification failed:", err);
+        });
+      }
+    }
   }
 
   cameraHealth.set(slug, health);
@@ -211,13 +225,6 @@ function recordFailure(slug: string, health: CameraHealth, now: number): void {
 // --- Notifications ---
 
 async function sendOfflineNotification(slug: string): Promise<void> {
-  const now = Date.now();
-  const lastNotified = offlineNotifiedAt.get(slug) || 0;
-  if (now - lastNotified < OFFLINE_NOTIFY_COOLDOWN_MS) {
-    console.log(`[StreamWarmer] Offline notification for "${slug}" suppressed (cooldown)`);
-    return;
-  }
-
   try {
     const { prisma } = await import("@/lib/db");
 
@@ -238,7 +245,7 @@ async function sendOfflineNotification(slug: string): Promise<void> {
       tag: `${slug}-offline`,
       data: {
         url: "/",
-        eventId: `offline-${slug}-${now}`,
+        eventId: `offline-${slug}-${Date.now()}`,
         camera: slug,
         objectType: "camera_offline",
       },
@@ -263,7 +270,7 @@ async function sendOfflineNotification(slug: string): Promise<void> {
       }
     }
 
-    offlineNotifiedAt.set(slug, now);
+    offlineNotifiedAt.set(slug, Date.now());
     console.log(
       `[StreamWarmer] Sent ${sentCount} offline notification(s) for "${slug}"`
     );
