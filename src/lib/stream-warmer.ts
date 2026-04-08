@@ -21,6 +21,8 @@ const CAMERA_REFRESH_INTERVAL_MS = 30000;
 const OFFLINE_THRESHOLD = 3;
 // Don't re-notify for the same camera going offline within 30 minutes
 const OFFLINE_NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
+// Try to restart a dead go2rtc stream every 60 seconds
+const STREAM_RESTART_INTERVAL_MS = 60000;
 
 interface CachedSnapshot {
   buffer: Buffer;
@@ -41,6 +43,7 @@ const globalForWarmer = globalThis as unknown as {
   __snapshotCache?: Map<string, CachedSnapshot>;
   __cameraHealth?: Map<string, CameraHealth>;
   __offlineNotifiedAt?: Map<string, number>;
+  __lastRestartAttempt?: Map<string, number>;
   __warmerInterval?: ReturnType<typeof setInterval>;
   __cameraRefreshInterval?: ReturnType<typeof setInterval>;
   __warmerSlugs?: string[];
@@ -58,6 +61,11 @@ globalForWarmer.__cameraHealth = cameraHealth;
 const offlineNotifiedAt =
   globalForWarmer.__offlineNotifiedAt ?? new Map<string, number>();
 globalForWarmer.__offlineNotifiedAt = offlineNotifiedAt;
+
+// Track when we last tried to restart a stream
+const lastRestartAttempt =
+  globalForWarmer.__lastRestartAttempt ?? new Map<string, number>();
+globalForWarmer.__lastRestartAttempt = lastRestartAttempt;
 
 let activeSlugs: string[] = globalForWarmer.__warmerSlugs ?? [];
 
@@ -122,7 +130,40 @@ async function checkStreamHealth(): Promise<void> {
       recordSuccess(slug, health, now);
     } else {
       recordFailure(slug, health, now);
+
+      // If offline, periodically restart the go2rtc stream to force
+      // a fresh RTSP reconnection attempt
+      if (!health.online) {
+        const lastRestart = lastRestartAttempt.get(slug) || 0;
+        if (now - lastRestart >= STREAM_RESTART_INTERVAL_MS) {
+          lastRestartAttempt.set(slug, now);
+          restartStream(slug).catch(() => {});
+        }
+      }
     }
+  }
+}
+
+/**
+ * Restart a go2rtc stream by deleting and re-requesting it.
+ * This forces go2rtc to re-establish the RTSP connection from scratch.
+ */
+async function restartStream(slug: string): Promise<void> {
+  try {
+    // Delete the stream — go2rtc drops the stale connection
+    await fetch(
+      `${GO2RTC_URL}/api/streams?src=${encodeURIComponent(slug)}`,
+      { method: "DELETE", signal: AbortSignal.timeout(3000) }
+    );
+    // Request a frame — go2rtc recreates the stream from its config
+    // and attempts a fresh RTSP connection
+    await fetch(
+      `${GO2RTC_URL}/api/frame.jpeg?src=${encodeURIComponent(slug)}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    console.log(`[StreamWarmer] Restarted stream for "${slug}"`);
+  } catch {
+    // go2rtc unavailable — will retry next cycle
   }
 }
 
@@ -136,6 +177,7 @@ function recordSuccess(slug: string, health: CameraHealth, now: number): void {
       health.offlineSince = null;
       health.recoveryCount = 0;
       offlineNotifiedAt.delete(slug);
+      lastRestartAttempt.delete(slug);
       console.log(`[StreamWarmer] Camera "${slug}" is back online`);
       sendOnlineNotification(slug).catch((err) => {
         console.error("[StreamWarmer] Online notification failed:", err);
@@ -306,6 +348,7 @@ async function refreshCameraList(): Promise<void> {
       if (!activeSlugs.includes(key)) {
         cameraHealth.delete(key);
         offlineNotifiedAt.delete(key);
+        lastRestartAttempt.delete(key);
       }
     }
   } catch {
