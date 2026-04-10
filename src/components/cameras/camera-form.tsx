@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { AlertTriangle, Info, Loader2 } from "lucide-react";
+import { AlertTriangle, Check, Info, Loader2 } from "lucide-react";
 import { useEnabledObjects } from "@/hooks/use-enabled-objects";
 import { useEnabledAudio } from "@/hooks/use-enabled-audio";
 import { ALL_OBJECTS, AUDIO_LABELS } from "@/lib/objects";
@@ -26,15 +26,25 @@ interface DetectCheckResult {
 interface CameraFormProps {
   camera?: Camera | null;
   onSubmit: (data: CameraFormData) => Promise<void>;
+  onAutoSave?: (data: CameraFormData) => Promise<void>;
   onCancel: () => void;
 }
 
-export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
+export function CameraForm({
+  camera,
+  onSubmit,
+  onAutoSave,
+  onCancel,
+}: CameraFormProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [saveStatus, setSaveStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
   const [detectCheck, setDetectCheck] = useState<DetectCheckResult | null>(
     null,
   );
+  const isEditMode = !!camera && !!onAutoSave;
   const { enabledObjects } = useEnabledObjects();
   const { enabledAudio } = useEnabledAudio();
   const [form, setForm] = useState<CameraFormData>({
@@ -86,8 +96,58 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
     }
   };
 
-  const update = (field: keyof CameraFormData, value: unknown) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
+  // --- Auto-save plumbing (edit mode only) ---
+  const formRef = useRef(form);
+  formRef.current = form;
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  const doAutoSave = useCallback(async () => {
+    if (!onAutoSave) return;
+    setSaveStatus("saving");
+    try {
+      await onAutoSave(formRef.current);
+      setSaveStatus("saved");
+      clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => setSaveStatus("idle"), 2000);
+    } catch {
+      setSaveStatus("error");
+    }
+  }, [onAutoSave]);
+
+  const scheduleAutoSave = useCallback(
+    (immediate?: boolean) => {
+      if (!isEditMode) return;
+      clearTimeout(debounceRef.current);
+      if (immediate) {
+        doAutoSave();
+      } else {
+        debounceRef.current = setTimeout(doAutoSave, 800);
+      }
+    },
+    [isEditMode, doAutoSave],
+  );
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      clearTimeout(debounceRef.current);
+      clearTimeout(savedTimerRef.current);
+    };
+  }, []);
+
+  const update = (
+    field: keyof CameraFormData,
+    value: unknown,
+    immediate?: boolean,
+  ) => {
+    setForm((prev) => {
+      const next = { ...prev, [field]: value };
+      // Update ref synchronously so auto-save reads the latest state
+      formRef.current = next;
+      return next;
+    });
+    if (isEditMode) scheduleAutoSave(immediate);
   };
 
   const hasWarnings = detectCheck && detectCheck.warnings.length > 0;
@@ -141,7 +201,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
           <Switch
             id="enabled"
             checked={form.enabled}
-            onCheckedChange={(v) => update("enabled", v)}
+            onCheckedChange={(v) => update("enabled", v, true)}
           />
         </div>
       </div>
@@ -155,7 +215,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
           <Switch
             id="detectEnabled"
             checked={form.detectEnabled}
-            onCheckedChange={(v) => update("detectEnabled", v)}
+            onCheckedChange={(v) => update("detectEnabled", v, true)}
           />
         </div>
 
@@ -267,7 +327,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
                     } else {
                       next = [...current, objId];
                     }
-                    update("objectsTrack", next.join(","));
+                    update("objectsTrack", next.join(","), true);
                   }}
                   className={cn(
                     "px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-150",
@@ -293,9 +353,9 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
               }
               onCheckedChange={(enabled) => {
                 if (enabled) {
-                  update("audioDetect", enabledAudio.join(","));
+                  update("audioDetect", enabledAudio.join(","), true);
                 } else {
-                  update("audioDetect", "");
+                  update("audioDetect", "", true);
                 }
               }}
             />
@@ -333,7 +393,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
                         } else {
                           next = [...current, audioId];
                         }
-                        update("audioDetect", next.join(","));
+                        update("audioDetect", next.join(","), true);
                       }}
                       className={cn(
                         "px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-150",
@@ -361,7 +421,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
             <MotionMaskEditor
               cameraSlug={camera.slug}
               value={form.motionMask ?? null}
-              onChange={(mask) => update("motionMask", mask ?? undefined)}
+              onChange={(mask) => update("motionMask", mask ?? undefined, true)}
               detectWidth={form.detectWidth ?? 1280}
               detectHeight={form.detectHeight ?? 720}
             />
@@ -378,7 +438,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
           <Switch
             id="recordEnabled"
             checked={form.recordEnabled}
-            onCheckedChange={(v) => update("recordEnabled", v)}
+            onCheckedChange={(v) => update("recordEnabled", v, true)}
           />
         </div>
         <div className="space-y-2">
@@ -398,7 +458,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
           <Switch
             id="snapshotsEnabled"
             checked={form.snapshotsEnabled}
-            onCheckedChange={(v) => update("snapshotsEnabled", v)}
+            onCheckedChange={(v) => update("snapshotsEnabled", v, true)}
           />
         </div>
       </div>
@@ -414,7 +474,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
           <Switch
             id="notifyEnabled"
             checked={form.notifyEnabled}
-            onCheckedChange={(v) => update("notifyEnabled", v)}
+            onCheckedChange={(v) => update("notifyEnabled", v, true)}
           />
         </div>
         <div className="space-y-2">
@@ -433,29 +493,57 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
 
       {error && <p className="text-sm text-destructive text-center">{error}</p>}
 
-      <div className="flex gap-3 pt-2">
-        <Button
-          type="button"
-          variant="secondary"
-          className="flex-1 h-11 rounded-xl"
-          onClick={onCancel}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="submit"
-          className="flex-1 h-11 rounded-xl"
-          disabled={loading}
-        >
-          {loading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : camera ? (
-            "Update"
-          ) : (
-            "Add Camera"
-          )}
-        </Button>
-      </div>
+      {isEditMode ? (
+        <div className="flex items-center gap-3 pt-2">
+          <div className="flex-1 text-xs text-muted-foreground">
+            {saveStatus === "saving" && (
+              <span className="flex items-center gap-1.5">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Saving...
+              </span>
+            )}
+            {saveStatus === "saved" && (
+              <span className="flex items-center gap-1.5 text-green-600">
+                <Check className="h-3 w-3" />
+                Saved
+              </span>
+            )}
+            {saveStatus === "error" && (
+              <span className="text-destructive">Save failed</span>
+            )}
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-11 rounded-xl px-8"
+            onClick={onCancel}
+          >
+            Done
+          </Button>
+        </div>
+      ) : (
+        <div className="flex gap-3 pt-2">
+          <Button
+            type="button"
+            variant="secondary"
+            className="flex-1 h-11 rounded-xl"
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            className="flex-1 h-11 rounded-xl"
+            disabled={loading}
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              "Add Camera"
+            )}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }
