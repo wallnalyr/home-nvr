@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Clock, Loader2, VideoOff } from "lucide-react";
+import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 
 type ClipState = "loading" | "playing" | "error" | "expired";
 
@@ -19,6 +20,7 @@ export function ClipPlayer({ eventId }: ClipPlayerProps) {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelledRef = useRef(false);
   const [state, setState] = useState<ClipState>("loading");
+  const { containerRef: zoomRef, handlers: zoomHandlers } = usePinchZoom();
 
   const cleanup = useCallback(() => {
     if (retryTimerRef.current) {
@@ -133,49 +135,57 @@ export function ClipPlayer({ eventId }: ClipPlayerProps) {
   }, [loadClip, cleanup]);
 
   return (
-    <div className="camera-feed-container rounded-xl overflow-hidden bg-black">
-      <video
-        ref={videoRef}
-        poster={`/api/frigate/events/${eventId}/snapshot`}
-        muted
-        controls
-        playsInline
-        className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
-          state === "playing" ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
-      />
-      {state === "loading" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/70">
-          <Loader2 className="h-8 w-8 animate-spin" />
-          <span className="text-xs">
-            {retryCountRef.current > 0
-              ? "Waiting for recording..."
-              : "Loading clip..."}
-          </span>
-        </div>
-      )}
-      {state === "expired" && (
-        <div className="absolute inset-0">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={`/api/frigate/events/${eventId}/snapshot`}
-            alt="Event snapshot"
-            className="absolute inset-0 w-full h-full object-contain"
-          />
-          <div className="absolute bottom-2 left-0 right-0 flex justify-center">
-            <span className="bg-black/60 text-white/70 text-[11px] px-2.5 py-1 rounded-full flex items-center gap-1.5">
-              <Clock className="h-3 w-3" />
-              Clip expired — showing snapshot
+    <div
+      ref={zoomRef}
+      className="camera-feed-container rounded-xl overflow-hidden bg-black"
+      {...zoomHandlers}
+    >
+      <div className="absolute inset-0">
+        <video
+          ref={videoRef}
+          poster={`/api/frigate/events/${eventId}/snapshot`}
+          muted
+          controls
+          playsInline
+          className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
+            state === "playing"
+              ? "opacity-100"
+              : "opacity-0 pointer-events-none"
+          }`}
+        />
+        {state === "loading" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/70">
+            <Loader2 className="h-8 w-8 animate-spin" />
+            <span className="text-xs">
+              {retryCountRef.current > 0
+                ? "Waiting for recording..."
+                : "Loading clip..."}
             </span>
           </div>
-        </div>
-      )}
-      {state === "error" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/50">
-          <VideoOff className="h-8 w-8" />
-          <span className="text-xs">Failed to load clip</span>
-        </div>
-      )}
+        )}
+        {state === "expired" && (
+          <div className="absolute inset-0">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`/api/frigate/events/${eventId}/snapshot`}
+              alt="Event snapshot"
+              className="absolute inset-0 w-full h-full object-contain"
+            />
+            <div className="absolute bottom-2 left-0 right-0 flex justify-center">
+              <span className="bg-black/60 text-white/70 text-[11px] px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                <Clock className="h-3 w-3" />
+                Clip expired — showing snapshot
+              </span>
+            </div>
+          </div>
+        )}
+        {state === "error" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/50">
+            <VideoOff className="h-8 w-8" />
+            <span className="text-xs">Failed to load clip</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

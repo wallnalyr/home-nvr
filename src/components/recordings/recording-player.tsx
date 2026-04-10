@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Loader2, VideoOff } from "lucide-react";
+import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 
 interface RecordingPlayerProps {
   camera: string;
@@ -19,6 +20,7 @@ export function RecordingPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<{ destroy: () => void } | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState>("loading");
+  const { containerRef: zoomRef, handlers: zoomHandlers } = usePinchZoom();
 
   useEffect(() => {
     const video = videoRef.current;
@@ -112,35 +114,41 @@ export function RecordingPlayer({
   }, [camera, startTime, endTime]);
 
   return (
-    <div className="camera-feed-container rounded-xl overflow-hidden bg-black">
-      <video
-        ref={videoRef}
-        controls
-        playsInline
-        className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
-          playerState === "playing"
-            ? "opacity-100"
-            : "opacity-0 pointer-events-none"
-        }`}
-      />
-      {playerState === "loading" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/70">
-          <Loader2 className="h-8 w-8 animate-spin" />
-          <span className="text-xs">Loading recording...</span>
-        </div>
-      )}
-      {playerState === "no-recording" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/50">
-          <VideoOff className="h-8 w-8" />
-          <span className="text-xs">No recording available</span>
-        </div>
-      )}
-      {playerState === "error" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/50">
-          <AlertCircle className="h-8 w-8" />
-          <span className="text-xs">Failed to load recording</span>
-        </div>
-      )}
+    <div
+      ref={zoomRef}
+      className="camera-feed-container rounded-xl overflow-hidden bg-black"
+      {...zoomHandlers}
+    >
+      <div className="absolute inset-0">
+        <video
+          ref={videoRef}
+          controls
+          playsInline
+          className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
+            playerState === "playing"
+              ? "opacity-100"
+              : "opacity-0 pointer-events-none"
+          }`}
+        />
+        {playerState === "loading" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/70">
+            <Loader2 className="h-8 w-8 animate-spin" />
+            <span className="text-xs">Loading recording...</span>
+          </div>
+        )}
+        {playerState === "no-recording" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/50">
+            <VideoOff className="h-8 w-8" />
+            <span className="text-xs">No recording available</span>
+          </div>
+        )}
+        {playerState === "error" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/50">
+            <AlertCircle className="h-8 w-8" />
+            <span className="text-xs">Failed to load recording</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
