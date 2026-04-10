@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Loader2, VideoOff } from "lucide-react";
+import { Loader2, Minimize2, VideoOff } from "lucide-react";
 import { useGo2rtcStream } from "@/hooks/use-go2rtc-stream";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 
@@ -88,43 +88,46 @@ export const CameraFeed = memo(function CameraFeed({
     }
   }, [serverOffline, status, retry]);
 
-  // Unmute on native fullscreen, re-mute on exit
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
+  // CSS-based fullscreen — replaces native iOS fullscreen so zoom/pan
+  // gestures keep working (iOS native fullscreen ignores our transforms)
+  const [isFakeFs, setIsFakeFs] = useState(false);
 
+  const enterFakeFullscreen = useCallback(() => {
+    const video = videoRef.current;
+    if (video) video.muted = false;
+    setIsFakeFs(true);
+    setFullscreen(true);
+  }, [videoRef, setFullscreen]);
+
+  const exitFakeFullscreen = useCallback(() => {
+    const video = videoRef.current;
+    if (video) video.muted = true;
+    setIsFakeFs(false);
+    setFullscreen(false);
+    resetZoom();
+    recover();
+  }, [videoRef, setFullscreen, resetZoom, recover]);
+
+  // Standard Fullscreen API fallback for non-iOS browsers
+  useEffect(() => {
     const onFullscreenChange = () => {
       const isFs =
         !!document.fullscreenElement ||
         !!(document as unknown as { webkitFullscreenElement?: Element })
           .webkitFullscreenElement;
-      video.muted = !isFs;
-      setFullscreen(isFs);
       if (!isFs) {
+        const video = videoRef.current;
+        if (video) video.muted = true;
+        setFullscreen(false);
+        resetZoom();
         recover();
       }
     };
 
-    const onIOSEnd = () => {
-      video.muted = true;
-      setFullscreen(false);
-      resetZoom();
-      recover();
-    };
-    const onIOSBegin = () => {
-      video.muted = false;
-      setFullscreen(true);
-      resetZoom();
-    };
-
-    video.addEventListener("webkitendfullscreen", onIOSEnd);
-    video.addEventListener("webkitbeginfullscreen", onIOSBegin);
     document.addEventListener("fullscreenchange", onFullscreenChange);
     document.addEventListener("webkitfullscreenchange", onFullscreenChange);
 
     return () => {
-      video.removeEventListener("webkitendfullscreen", onIOSEnd);
-      video.removeEventListener("webkitbeginfullscreen", onIOSBegin);
       document.removeEventListener("fullscreenchange", onFullscreenChange);
       document.removeEventListener(
         "webkitfullscreenchange",
@@ -137,21 +140,24 @@ export const CameraFeed = memo(function CameraFeed({
     // Don't enter fullscreen while zoomed — taps are for panning/double-tap zoom
     if (isZoomed()) return;
 
+    if (isFakeFs) return; // Already fullscreen
+
     const video = videoRef.current;
     if (!video) return;
 
-    video.muted = false;
-
-    if ("webkitEnterFullscreen" in video) {
-      (
-        video as HTMLVideoElement & { webkitEnterFullscreen: () => void }
-      ).webkitEnterFullscreen();
+    // Use CSS fullscreen on iOS (preserves zoom/pan), native API elsewhere
+    const isIOS = "webkitEnterFullscreen" in video;
+    if (isIOS) {
+      enterFakeFullscreen();
     } else if (video.requestFullscreen) {
+      video.muted = false;
+      setFullscreen(true);
       video.requestFullscreen().catch(() => {
         video.muted = true;
+        setFullscreen(false);
       });
     }
-  }, [videoRef, isZoomed]);
+  }, [videoRef, isZoomed, isFakeFs, enterFakeFullscreen, setFullscreen]);
 
   const handleRetry = useCallback(
     (e: React.MouseEvent) => {
@@ -163,54 +169,59 @@ export const CameraFeed = memo(function CameraFeed({
 
   return (
     <div className={cn("flex flex-col", className)}>
-      {/* Camera name and status indicator */}
-      <div className="flex items-center justify-between px-1 pb-1.5">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-sm font-semibold text-foreground truncate">
-            {cameraName}
-          </span>
-          {eventCount != null && eventCount > 0 && (
-            <span className="shrink-0 min-w-[18px] h-[18px] rounded-full bg-muted text-muted-foreground text-[10px] font-bold flex items-center justify-center px-1 leading-none">
-              {eventCount > 99 ? "99+" : eventCount}
+      {/* Camera name and status indicator — hidden in fullscreen */}
+      {!isFakeFs && (
+        <div className="flex items-center justify-between px-1 pb-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-sm font-semibold text-foreground truncate">
+              {cameraName}
             </span>
-          )}
+            {eventCount != null && eventCount > 0 && (
+              <span className="shrink-0 min-w-[18px] h-[18px] rounded-full bg-muted text-muted-foreground text-[10px] font-bold flex items-center justify-center px-1 leading-none">
+                {eventCount > 99 ? "99+" : eventCount}
+              </span>
+            )}
+          </div>
+          {showFullOffline ? (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="h-2 w-2 rounded-full bg-red-500" />
+              <span className="text-[11px] font-semibold text-red-500 uppercase tracking-wider">
+                Offline
+              </span>
+            </div>
+          ) : isLive ? (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="h-2 w-2 rounded-full bg-green-500 live-pulse" />
+              <span className="text-[11px] font-semibold text-green-500 uppercase tracking-wider">
+                Live
+              </span>
+            </div>
+          ) : inGracePeriod ? (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+              <span className="text-[11px] font-medium text-amber-500">
+                Reconnecting
+              </span>
+            </div>
+          ) : status === "connecting" ? (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+              <span className="text-[11px] font-medium text-muted-foreground">
+                Connecting
+              </span>
+            </div>
+          ) : null}
         </div>
-        {showFullOffline ? (
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="h-2 w-2 rounded-full bg-red-500" />
-            <span className="text-[11px] font-semibold text-red-500 uppercase tracking-wider">
-              Offline
-            </span>
-          </div>
-        ) : isLive ? (
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="h-2 w-2 rounded-full bg-green-500 live-pulse" />
-            <span className="text-[11px] font-semibold text-green-500 uppercase tracking-wider">
-              Live
-            </span>
-          </div>
-        ) : inGracePeriod ? (
-          <div className="flex items-center gap-1.5 shrink-0">
-            <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
-            <span className="text-[11px] font-medium text-amber-500">
-              Reconnecting
-            </span>
-          </div>
-        ) : status === "connecting" ? (
-          <div className="flex items-center gap-1.5 shrink-0">
-            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-            <span className="text-[11px] font-medium text-muted-foreground">
-              Connecting
-            </span>
-          </div>
-        ) : null}
-      </div>
+      )}
 
       {/* Camera feed with pinch-zoom-pan */}
       <div
         ref={zoomRef}
-        className="camera-feed-container shadow-sm rounded-xl overflow-hidden"
-        style={{ touchAction: isZoomed() ? "none" : undefined }}
+        className={cn(
+          isFakeFs
+            ? "fixed inset-0 z-50 bg-black"
+            : "camera-feed-container shadow-sm rounded-xl overflow-hidden",
+        )}
         onClick={isLive ? handleTap : undefined}
         role={isLive ? "button" : undefined}
         tabIndex={isLive ? 0 : undefined}
@@ -273,6 +284,19 @@ export const CameraFeed = memo(function CameraFeed({
             </button>
           )}
         </div>
+
+        {/* Fullscreen close button */}
+        {isFakeFs && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              exitFakeFullscreen();
+            }}
+            className="absolute top-4 right-4 z-10 flex items-center justify-center h-10 w-10 rounded-full bg-black/50 text-white/80 backdrop-blur-sm"
+          >
+            <Minimize2 className="h-5 w-5" />
+          </button>
+        )}
       </div>
     </div>
   );
