@@ -1,6 +1,13 @@
 "use client";
 
-import { Camera as CameraIcon, Trash2, ChevronDown, ChevronUp, ArrowUp, ArrowDown } from "lucide-react";
+import {
+  Camera as CameraIcon,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  ArrowUp,
+  ArrowDown,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { CameraForm } from "./camera-form";
 import type { Camera, CameraFormData } from "@/types/camera";
@@ -11,6 +18,7 @@ interface CameraListProps {
   onEdit: (camera: Camera) => void;
   onCancelEdit: () => void;
   onSubmitEdit: (data: CameraFormData) => Promise<void>;
+  onAutoSave?: (cameraId: string, data: CameraFormData) => Promise<void>;
   onDelete: (camera: Camera) => void;
   reorderMode?: boolean;
   onMove?: (index: number, direction: -1 | 1) => void;
@@ -22,6 +30,7 @@ export function CameraList({
   onEdit,
   onCancelEdit,
   onSubmitEdit,
+  onAutoSave,
   onDelete,
   reorderMode,
   onMove,
@@ -46,7 +55,11 @@ export function CameraList({
           <div key={camera.id}>
             <div
               className="flex items-center gap-3 px-4 py-3 cursor-pointer"
-              onClick={reorderMode ? undefined : () => isEditing ? onCancelEdit() : onEdit(camera)}
+              onClick={
+                reorderMode
+                  ? undefined
+                  : () => (isEditing ? onCancelEdit() : onEdit(camera))
+              }
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -54,7 +67,10 @@ export function CameraList({
                     {camera.name}
                   </span>
                   {!reorderMode && (
-                    <Badge variant={camera.enabled ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">
+                    <Badge
+                      variant={camera.enabled ? "default" : "secondary"}
+                      className="text-[10px] px-1.5 py-0"
+                    >
                       {camera.enabled ? "Active" : "Disabled"}
                     </Badge>
                   )}
@@ -62,13 +78,19 @@ export function CameraList({
                 {!reorderMode && (
                   <div className="flex gap-2 mt-0.5">
                     {camera.detectEnabled && (
-                      <span className="text-[10px] text-muted-foreground">Detect</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        Detect
+                      </span>
                     )}
                     {camera.recordEnabled && (
-                      <span className="text-[10px] text-muted-foreground">Record</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        Record
+                      </span>
                     )}
                     {camera.snapshotsEnabled && (
-                      <span className="text-[10px] text-muted-foreground">Snap</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        Snap
+                      </span>
                     )}
                   </div>
                 )}
@@ -116,6 +138,11 @@ export function CameraList({
                 <CameraForm
                   camera={camera}
                   onSubmit={onSubmitEdit}
+                  onAutoSave={
+                    onAutoSave
+                      ? (data) => onAutoSave(camera.id, data)
+                      : undefined
+                  }
                   onCancel={onCancelEdit}
                 />
               </div>

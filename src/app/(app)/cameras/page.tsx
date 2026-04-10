@@ -24,25 +24,28 @@ export default function CamerasPage() {
   const [deleting, setDeleting] = useState(false);
   const [reorderMode, setReorderMode] = useState(false);
 
-  const moveCamera = useCallback(async (index: number, direction: -1 | 1) => {
-    const target = index + direction;
-    if (target < 0 || target >= cameras.length) return;
-    const a = cameras[index];
-    const b = cameras[target];
-    await Promise.all([
-      fetch(`/api/cameras/${a.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sortOrder: target }),
-      }),
-      fetch(`/api/cameras/${b.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sortOrder: index }),
-      }),
-    ]);
-    await mutate();
-  }, [cameras, mutate]);
+  const moveCamera = useCallback(
+    async (index: number, direction: -1 | 1) => {
+      const target = index + direction;
+      if (target < 0 || target >= cameras.length) return;
+      const a = cameras[index];
+      const b = cameras[target];
+      await Promise.all([
+        fetch(`/api/cameras/${a.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sortOrder: target }),
+        }),
+        fetch(`/api/cameras/${b.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sortOrder: index }),
+        }),
+      ]);
+      await mutate();
+    },
+    [cameras, mutate],
+  );
 
   const handleAdd = async (data: CameraFormData) => {
     const res = await fetch("/api/cameras", {
@@ -72,6 +75,22 @@ export default function CamerasPage() {
     await mutate();
     setEditingId(null);
   };
+
+  const handleAutoSave = useCallback(
+    async (cameraId: string, data: CameraFormData) => {
+      const res = await fetch(`/api/cameras/${cameraId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to save");
+      }
+      await mutate();
+    },
+    [mutate],
+  );
 
   const handleDelete = async () => {
     if (!deleteCamera) return;
@@ -110,7 +129,10 @@ export default function CamerasPage() {
             <Button
               size="sm"
               className="gap-1 h-9 rounded-lg"
-              onClick={() => { setAddingCamera(true); setEditingId(null); }}
+              onClick={() => {
+                setAddingCamera(true);
+                setEditingId(null);
+              }}
             >
               <Plus className="h-4 w-4" />
               Add
@@ -146,9 +168,13 @@ export default function CamerasPage() {
       <CameraList
         cameras={cameras}
         editingId={reorderMode ? null : editingId}
-        onEdit={(cam) => { setEditingId(cam.id); setAddingCamera(false); }}
+        onEdit={(cam) => {
+          setEditingId(cam.id);
+          setAddingCamera(false);
+        }}
         onCancelEdit={() => setEditingId(null)}
         onSubmitEdit={handleEdit}
+        onAutoSave={handleAutoSave}
         onDelete={setDeleteCamera}
         reorderMode={reorderMode}
         onMove={moveCamera}
@@ -169,10 +195,7 @@ export default function CamerasPage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="secondary"
-              onClick={() => setDeleteCamera(null)}
-            >
+            <Button variant="secondary" onClick={() => setDeleteCamera(null)}>
               Cancel
             </Button>
             <Button
