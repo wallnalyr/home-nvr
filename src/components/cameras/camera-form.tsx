@@ -11,6 +11,7 @@ import { useEnabledObjects } from "@/hooks/use-enabled-objects";
 import { useEnabledAudio } from "@/hooks/use-enabled-audio";
 import { ALL_OBJECTS, AUDIO_LABELS } from "@/lib/objects";
 import { cn } from "@/lib/utils";
+import { MotionMaskEditor } from "@/components/cameras/motion-mask-editor";
 import type { Camera, CameraFormData } from "@/types/camera";
 
 interface DetectCheckResult {
@@ -31,7 +32,9 @@ interface CameraFormProps {
 export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [detectCheck, setDetectCheck] = useState<DetectCheckResult | null>(null);
+  const [detectCheck, setDetectCheck] = useState<DetectCheckResult | null>(
+    null,
+  );
   const { enabledObjects } = useEnabledObjects();
   const { enabledAudio } = useEnabledAudio();
   const [form, setForm] = useState<CameraFormData>({
@@ -51,6 +54,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
     notifyEnabled: camera?.notifyEnabled ?? true,
     notifyCooldownSec: camera?.notifyCooldownSec ?? 30,
     motionThreshold: camera?.motionThreshold ?? 30,
+    motionMask: camera?.motionMask ?? undefined,
   });
 
   const fetchDetectCheck = useCallback(() => {
@@ -160,9 +164,13 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
           <div className="space-y-2">
             <div className="flex items-center gap-2 rounded-lg bg-secondary/50 px-3 py-2">
               <span className="text-xs text-muted-foreground">
-                Detector: <span className="font-medium text-foreground">{detectCheck.detectorLabel}</span>
+                Detector:{" "}
+                <span className="font-medium text-foreground">
+                  {detectCheck.detectorLabel}
+                </span>
                 {" · "}
-                {detectCheck.detectCamerasCount} of {detectCheck.maxRecommended} max cameras
+                {detectCheck.detectCamerasCount} of {detectCheck.maxRecommended}{" "}
+                max cameras
               </span>
             </div>
 
@@ -192,7 +200,9 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
 
         <div className="grid grid-cols-3 gap-2">
           <div className="space-y-1">
-            <Label htmlFor="detectWidth" className="text-xs">Width</Label>
+            <Label htmlFor="detectWidth" className="text-xs">
+              Width
+            </Label>
             <Input
               id="detectWidth"
               type="number"
@@ -202,7 +212,9 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="detectHeight" className="text-xs">Height</Label>
+            <Label htmlFor="detectHeight" className="text-xs">
+              Height
+            </Label>
             <Input
               id="detectHeight"
               type="number"
@@ -212,7 +224,9 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="detectFps" className="text-xs">FPS</Label>
+            <Label htmlFor="detectFps" className="text-xs">
+              FPS
+            </Label>
             <Input
               id="detectFps"
               type="number"
@@ -235,7 +249,8 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
               const objDef = ALL_OBJECTS.find((o) => o.id === objId);
               const label = objDef
                 ? objDef.label
-                : objId.charAt(0).toUpperCase() + objId.slice(1).replace(/_/g, " ");
+                : objId.charAt(0).toUpperCase() +
+                  objId.slice(1).replace(/_/g, " ");
               return (
                 <button
                   key={objId}
@@ -258,7 +273,7 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
                     "px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-150",
                     isActive
                       ? "bg-ios-blue text-white shadow-sm"
-                      : "bg-secondary/60 text-secondary-foreground"
+                      : "bg-secondary/60 text-secondary-foreground",
                   )}
                 >
                   {label}
@@ -273,7 +288,9 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
             <Label htmlFor="audioEnabled">Audio</Label>
             <Switch
               id="audioEnabled"
-              checked={(form.audioDetect ?? "").split(",").filter(Boolean).length > 0}
+              checked={
+                (form.audioDetect ?? "").split(",").filter(Boolean).length > 0
+              }
               onCheckedChange={(enabled) => {
                 if (enabled) {
                   update("audioDetect", enabledAudio.join(","));
@@ -287,51 +304,69 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
             Disables audio for live view, recording, and detection
           </p>
           {(form.audioDetect ?? "").split(",").filter(Boolean).length > 0 && (
-          <div className="space-y-1.5">
-          <Label className="text-xs">Detection Labels</Label>
-          <div className="flex flex-wrap gap-1.5">
-            {enabledAudio.map((audioId) => {
-              const tracked = (form.audioDetect ?? "")
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean);
-              const isActive = tracked.includes(audioId);
-              const audioDef = AUDIO_LABELS.find((a) => a.id === audioId);
-              const label = audioDef
-                ? audioDef.label
-                : audioId.charAt(0).toUpperCase() + audioId.slice(1).replace(/_/g, " ");
-              return (
-                <button
-                  key={audioId}
-                  type="button"
-                  onClick={() => {
-                    const current = (form.audioDetect ?? "")
-                      .split(",")
-                      .map((s) => s.trim())
-                      .filter(Boolean);
-                    let next: string[];
-                    if (isActive) {
-                      next = current.filter((a) => a !== audioId);
-                    } else {
-                      next = [...current, audioId];
-                    }
-                    update("audioDetect", next.join(","));
-                  }}
-                  className={cn(
-                    "px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-150",
-                    isActive
-                      ? "bg-ios-blue text-white shadow-sm"
-                      : "bg-secondary/60 text-secondary-foreground"
-                  )}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-          </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Detection Labels</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {enabledAudio.map((audioId) => {
+                  const tracked = (form.audioDetect ?? "")
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                  const isActive = tracked.includes(audioId);
+                  const audioDef = AUDIO_LABELS.find((a) => a.id === audioId);
+                  const label = audioDef
+                    ? audioDef.label
+                    : audioId.charAt(0).toUpperCase() +
+                      audioId.slice(1).replace(/_/g, " ");
+                  return (
+                    <button
+                      key={audioId}
+                      type="button"
+                      onClick={() => {
+                        const current = (form.audioDetect ?? "")
+                          .split(",")
+                          .map((s) => s.trim())
+                          .filter(Boolean);
+                        let next: string[];
+                        if (isActive) {
+                          next = current.filter((a) => a !== audioId);
+                        } else {
+                          next = [...current, audioId];
+                        }
+                        update("audioDetect", next.join(","));
+                      }}
+                      className={cn(
+                        "px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-150",
+                        isActive
+                          ? "bg-ios-blue text-white shadow-sm"
+                          : "bg-secondary/60 text-secondary-foreground",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
+
+        {/* Motion Mask — only available when editing (needs slug for snapshot) */}
+        {camera && (
+          <div className="space-y-2">
+            <Label>Motion Mask</Label>
+            <p className="text-xs text-muted-foreground">
+              Draw areas to ignore for motion detection
+            </p>
+            <MotionMaskEditor
+              cameraSlug={camera.slug}
+              value={form.motionMask ?? null}
+              onChange={(mask) => update("motionMask", mask ?? undefined)}
+              detectWidth={form.detectWidth ?? 1280}
+              detectHeight={form.detectHeight ?? 720}
+            />
+          </div>
+        )}
       </div>
 
       <Separator />
@@ -352,7 +387,9 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
             id="recordRetainDays"
             type="number"
             value={form.recordRetainDays}
-            onChange={(e) => update("recordRetainDays", parseInt(e.target.value))}
+            onChange={(e) =>
+              update("recordRetainDays", parseInt(e.target.value))
+            }
             className="h-11"
           />
         </div>
@@ -386,22 +423,37 @@ export function CameraForm({ camera, onSubmit, onCancel }: CameraFormProps) {
             id="notifyCooldownSec"
             type="number"
             value={form.notifyCooldownSec}
-            onChange={(e) => update("notifyCooldownSec", parseInt(e.target.value))}
+            onChange={(e) =>
+              update("notifyCooldownSec", parseInt(e.target.value))
+            }
             className="h-11"
           />
         </div>
       </div>
 
-      {error && (
-        <p className="text-sm text-destructive text-center">{error}</p>
-      )}
+      {error && <p className="text-sm text-destructive text-center">{error}</p>}
 
       <div className="flex gap-3 pt-2">
-        <Button type="button" variant="secondary" className="flex-1 h-11 rounded-xl" onClick={onCancel}>
+        <Button
+          type="button"
+          variant="secondary"
+          className="flex-1 h-11 rounded-xl"
+          onClick={onCancel}
+        >
           Cancel
         </Button>
-        <Button type="submit" className="flex-1 h-11 rounded-xl" disabled={loading}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : camera ? "Update" : "Add Camera"}
+        <Button
+          type="submit"
+          className="flex-1 h-11 rounded-xl"
+          disabled={loading}
+        >
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : camera ? (
+            "Update"
+          ) : (
+            "Add Camera"
+          )}
         </Button>
       </div>
     </form>

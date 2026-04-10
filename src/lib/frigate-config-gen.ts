@@ -1,8 +1,16 @@
 import yaml from "js-yaml";
 import os from "os";
 import { prisma } from "@/lib/db";
-import { detectGPU, detectCoral, resolveDetectorType } from "@/lib/hardware-detect";
-import { getObjectById, DEFAULT_ENABLED_OBJECTS, DEFAULT_ENABLED_AUDIO } from "@/lib/objects";
+import {
+  detectGPU,
+  detectCoral,
+  resolveDetectorType,
+} from "@/lib/hardware-detect";
+import {
+  getObjectById,
+  DEFAULT_ENABLED_OBJECTS,
+  DEFAULT_ENABLED_AUDIO,
+} from "@/lib/objects";
 import { writeFile } from "fs/promises";
 
 /**
@@ -28,7 +36,10 @@ interface FrigateConfig {
   detectors: Record<string, unknown>;
   model?: { path: string };
   ffmpeg?: Record<string, unknown>;
-  go2rtc: { streams: Record<string, string[]>; webrtc?: Record<string, unknown> };
+  go2rtc: {
+    streams: Record<string, string[]>;
+    webrtc?: Record<string, unknown>;
+  };
   cameras: Record<string, unknown>;
   record?: Record<string, unknown>;
   snapshots?: Record<string, unknown>;
@@ -46,14 +57,14 @@ export async function generateFrigateConfig(): Promise<string> {
     where: { key: "enabled_objects" },
   });
   const globalObjects = new Set<string>(
-    objectsRow ? JSON.parse(objectsRow.value) : DEFAULT_ENABLED_OBJECTS
+    objectsRow ? JSON.parse(objectsRow.value) : DEFAULT_ENABLED_OBJECTS,
   );
 
   const audioRow = await prisma.systemConfig.findUnique({
     where: { key: "enabled_audio" },
   });
   const globalAudio = new Set<string>(
-    audioRow ? JSON.parse(audioRow.value) : DEFAULT_ENABLED_AUDIO
+    audioRow ? JSON.parse(audioRow.value) : DEFAULT_ENABLED_AUDIO,
   );
 
   const gpu = detectGPU();
@@ -214,7 +225,21 @@ export async function generateFrigateConfig(): Promise<string> {
         ...(camera.motionMask
           ? (() => {
               try {
-                return { mask: JSON.parse(camera.motionMask) };
+                const parsed = JSON.parse(camera.motionMask);
+                if (!Array.isArray(parsed) || parsed.length === 0) return {};
+                // Convert normalized [0-1] polygon coordinates to Frigate's
+                // pixel-space format: ["x1,y1,x2,y2,...", ...]
+                const w = camera.detectWidth;
+                const h = camera.detectHeight;
+                const mask = parsed.map((polygon: number[][]) =>
+                  polygon
+                    .map(
+                      ([x, y]: number[]) =>
+                        `${Math.round(x * w)},${Math.round(y * h)}`,
+                    )
+                    .join(","),
+                );
+                return { mask };
               } catch {
                 return {};
               }
@@ -283,13 +308,15 @@ export async function regenerateFrigateConfig(): Promise<void> {
     await saveFrigateConfig(configYaml);
     console.log("[Config] Config saved and restart triggered");
   } catch (err) {
-    console.warn("[Config] Frigate API push failed:", err instanceof Error ? err.message : err);
+    console.warn(
+      "[Config] Frigate API push failed:",
+      err instanceof Error ? err.message : err,
+    );
     if (!fileWritten) {
       throw new Error(
-        "Failed to save Frigate config: file write failed and API unreachable"
+        "Failed to save Frigate config: file write failed and API unreachable",
       );
     }
     // File was written; Frigate will pick it up on next container restart
   }
 }
-
