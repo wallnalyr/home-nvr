@@ -41,12 +41,15 @@ function checkRateLimit(ip: string): boolean {
 }
 
 export async function POST(request: NextRequest) {
-  const ip = request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown";
+  const ip =
+    request.headers.get("x-forwarded-for") ||
+    request.headers.get("x-real-ip") ||
+    "unknown";
 
   if (!checkRateLimit(ip)) {
     return NextResponse.json(
       { error: "Too many login attempts. Try again later." },
-      { status: 429 }
+      { status: 429 },
     );
   }
 
@@ -57,21 +60,21 @@ export async function POST(request: NextRequest) {
     if (!username || !password) {
       return NextResponse.json(
         { error: "Username and password required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (username !== ADMIN_USERNAME) {
       return NextResponse.json(
         { error: "Invalid credentials" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
     if (!ADMIN_PASSWORD_HASH) {
       return NextResponse.json(
         { error: "Admin password not configured" },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -79,7 +82,7 @@ export async function POST(request: NextRequest) {
     if (!valid) {
       return NextResponse.json(
         { error: "Invalid credentials" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -89,11 +92,13 @@ export async function POST(request: NextRequest) {
     // Reset rate limit on success
     loginAttempts.delete(ip);
 
-    return NextResponse.json({ success: true });
+    // Return token in body so the client can persist it in localStorage
+    // as a fallback for iOS PWA cookie purging
+    return NextResponse.json({ success: true, token });
   } catch {
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

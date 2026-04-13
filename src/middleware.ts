@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify, SignJWT } from "jose";
 
 const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "development-secret-change-me"
+  process.env.JWT_SECRET || "development-secret-change-me",
 );
 
 // Refresh the JWT when less than this many seconds remain
@@ -12,6 +12,7 @@ const PUBLIC_PATHS = [
   "/login",
   "/api/auth/login",
   "/api/auth/logout",
+  "/api/auth/restore",
   "/api/system/health",
   "/manifest.json",
   "/manifest.webmanifest",
@@ -19,7 +20,9 @@ const PUBLIC_PATHS = [
 ];
 
 function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
+  return PUBLIC_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(p + "/"),
+  );
 }
 
 function isStaticAsset(pathname: string): boolean {
