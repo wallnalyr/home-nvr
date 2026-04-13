@@ -33,6 +33,12 @@ export function LoginForm() {
         return;
       }
 
+      if (data.token) {
+        try {
+          localStorage.setItem("auth-token-backup", data.token);
+        } catch {}
+      }
+
       router.push("/");
       router.refresh();
     } catch {
@@ -95,11 +101,7 @@ export function LoginForm() {
             className="w-full h-12 text-base"
             disabled={loading}
           >
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              "Sign In"
-            )}
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign In"}
           </Button>
         </form>
       </div>

@@ -3,12 +3,9 @@
 import { useEffect } from "react";
 import { BottomNav } from "@/components/layout/bottom-nav";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
+import { SessionRestorer } from "@/components/auth/session-restorer";
 
-export default function AppLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function AppLayout({ children }: { children: React.ReactNode }) {
   // Prevent iOS overscroll bounce on non-scrollable areas (header, nav)
   useEffect(() => {
     const onTouchMove = (e: TouchEvent) => {
@@ -43,6 +40,7 @@ export default function AppLayout({
         <BottomNav />
       </div>
       <InstallPrompt />
+      <SessionRestorer />
     </>
   );
 }

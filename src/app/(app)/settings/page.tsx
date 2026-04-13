@@ -22,6 +22,9 @@ export default function SettingsPage() {
     if (loggingOut) return;
     setLoggingOut(true);
     await fetch("/api/auth/logout", { method: "POST" });
+    try {
+      localStorage.removeItem("auth-token-backup");
+    } catch {}
     router.push("/login");
     router.refresh();
   };
@@ -38,7 +41,7 @@ export default function SettingsPage() {
               "flex-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors tap-target",
               activeTab === tab
                 ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground"
+                : "text-muted-foreground",
             )}
           >
             {tab}
