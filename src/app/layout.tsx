@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
@@ -27,14 +28,16 @@ export const viewport: Viewport = {
   themeColor: "#F2F2F7",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Reading headers forces dynamic rendering so process.env.TZ
+  // is read at request time, not baked in at build time
+  await headers();
   const serverTz =
-    process.env.TZ ||
-    Intl.DateTimeFormat().resolvedOptions().timeZone;
+    process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   return (
     <html lang="en" suppressHydrationWarning>
