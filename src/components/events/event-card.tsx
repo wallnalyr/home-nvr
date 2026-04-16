@@ -29,8 +29,7 @@ export function EventCard({
   });
 
   const displayCamera = cameraDisplayName || event.camera;
-  const labelText =
-    event.label.charAt(0).toUpperCase() + event.label.slice(1);
+  const labelText = event.label.charAt(0).toUpperCase() + event.label.slice(1);
 
   const cardContent = (
     <>
@@ -73,7 +72,9 @@ export function EventCard({
                   : "bg-black/30 border-white/80"
               }`}
             >
-              {isSelected && <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />}
+              {isSelected && (
+                <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />
+              )}
             </div>
           </div>
         )}
@@ -83,20 +84,16 @@ export function EventCard({
         )}
       </div>
       <div className="p-2.5">
-        <p className="text-sm font-medium truncate">{displayCamera}</p>
-        <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="text-xs text-muted-foreground">{labelText}</span>
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm font-medium truncate">{labelText}</p>
           {event.top_score > 0 && (
-            <>
-              <span className="text-xs text-muted-foreground">·</span>
-              <span className="text-xs text-muted-foreground">
-                {Math.round(event.top_score * 100)}%
-              </span>
-            </>
+            <span className="text-xs text-muted-foreground">
+              {Math.round(event.top_score * 100)}%
+            </span>
           )}
         </div>
-        <p className="text-[11px] text-muted-foreground mt-0.5">
-          {timeAgo}
+        <p className="text-xs text-muted-foreground mt-0.5 truncate">
+          {displayCamera} · {timeAgo}
         </p>
       </div>
     </>
