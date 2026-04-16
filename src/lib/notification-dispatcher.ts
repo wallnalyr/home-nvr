@@ -1,7 +1,11 @@
 import { prisma } from "@/lib/db";
 import { webpush } from "@/lib/webpush";
 import { getFrigateEventSnapshot } from "@/lib/frigate-client";
-import { getAudioLabelById, DEFAULT_ENABLED_OBJECTS, DEFAULT_ENABLED_AUDIO } from "@/lib/objects";
+import {
+  getAudioLabelById,
+  DEFAULT_ENABLED_OBJECTS,
+  DEFAULT_ENABLED_AUDIO,
+} from "@/lib/objects";
 import type { NotificationPayload } from "@/types/notification";
 
 // Cooldown tracking: camera -> last notification timestamp
@@ -54,11 +58,7 @@ interface FrigateEventPayload {
 
 export async function handleFrigateEvent(payload: unknown) {
   // Route audio events to dedicated handler
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "_audio" in payload
-  ) {
+  if (typeof payload === "object" && payload !== null && "_audio" in payload) {
     await handleAudioEvent(payload as AudioEventPayload);
     return;
   }
@@ -72,7 +72,7 @@ export async function handleFrigateEvent(payload: unknown) {
   const { camera: cameraName, label, id: eventId } = after;
 
   console.log(
-    `[Notification] New event: ${label} on ${cameraName} (${eventId})`
+    `[Notification] New event: ${label} on ${cameraName} (${eventId})`,
   );
 
   // Look up camera in DB by slug (Frigate uses slug as camera identifier)
@@ -81,7 +81,7 @@ export async function handleFrigateEvent(payload: unknown) {
   });
   if (!camera) {
     console.log(
-      `[Notification] Skipped: camera "${cameraName}" not found, disabled, or notifications off`
+      `[Notification] Skipped: camera "${cameraName}" not found, disabled, or notifications off`,
     );
     return;
   }
@@ -94,9 +94,7 @@ export async function handleFrigateEvent(payload: unknown) {
     ? JSON.parse(objectsRow.value)
     : DEFAULT_ENABLED_OBJECTS;
   if (!globalObjects.includes(label)) {
-    console.log(
-      `[Notification] Skipped: "${label}" not globally enabled`
-    );
+    console.log(`[Notification] Skipped: "${label}" not globally enabled`);
     return;
   }
 
@@ -107,7 +105,7 @@ export async function handleFrigateEvent(payload: unknown) {
     .filter(Boolean);
   if (!cameraObjects.includes(label)) {
     console.log(
-      `[Notification] Skipped: "${label}" not tracked by camera "${cameraName}"`
+      `[Notification] Skipped: "${label}" not tracked by camera "${cameraName}"`,
     );
     return;
   }
@@ -118,7 +116,7 @@ export async function handleFrigateEvent(payload: unknown) {
   const hasBatch = eventBuffers.has(cameraName);
   if (!hasBatch && now - lastNotified < camera.notifyCooldownSec * 1000) {
     console.log(
-      `[Notification] Skipped: cooldown active for ${cameraName} (${camera.notifyCooldownSec}s)`
+      `[Notification] Skipped: cooldown active for ${cameraName} (${camera.notifyCooldownSec}s)`,
     );
     return;
   }
@@ -131,7 +129,7 @@ export async function handleFrigateEvent(payload: unknown) {
     const allowedObjects: string[] = JSON.parse(notifObjRow.value);
     if (!allowedObjects.includes(label)) {
       console.log(
-        `[Notification] Skipped: "${label}" not in notification objects filter`
+        `[Notification] Skipped: "${label}" not in notification objects filter`,
       );
       return;
     }
@@ -143,7 +141,9 @@ export async function handleFrigateEvent(payload: unknown) {
     // Don't duplicate the same label in one batch
     if (!existing.events.some((e) => e.label === label)) {
       existing.events.push({ label, eventId, cameraName });
-      console.log(`[Notification] Batched: ${label} on ${cameraName} (${existing.events.length} in batch)`);
+      console.log(
+        `[Notification] Batched: ${label} on ${cameraName} (${existing.events.length} in batch)`,
+      );
     }
   } else {
     // Start a new batch with a 2-second timer
@@ -157,7 +157,9 @@ export async function handleFrigateEvent(payload: unknown) {
       events: [{ label, eventId, cameraName }],
       timer,
     });
-    console.log(`[Notification] Buffered: ${label} on ${cameraName} (2s batch window started)`);
+    console.log(
+      `[Notification] Buffered: ${label} on ${cameraName} (2s batch window started)`,
+    );
   }
 }
 
@@ -191,22 +193,22 @@ async function flushEventBuffer(cameraName: string) {
 
     return events.some((evt) => {
       const specific = prefs.find(
-        (p) => p.camera === cameraName && p.objectType === evt.label
+        (p) => p.camera === cameraName && p.objectType === evt.label,
       );
       if (specific) return specific.enabled;
 
       const cameraAll = prefs.find(
-        (p) => p.camera === cameraName && p.objectType === "*"
+        (p) => p.camera === cameraName && p.objectType === "*",
       );
       if (cameraAll) return cameraAll.enabled;
 
       const allCameraSpecific = prefs.find(
-        (p) => p.camera === "*" && p.objectType === evt.label
+        (p) => p.camera === "*" && p.objectType === evt.label,
       );
       if (allCameraSpecific) return allCameraSpecific.enabled;
 
       const global = prefs.find(
-        (p) => p.camera === "*" && p.objectType === "*"
+        (p) => p.camera === "*" && p.objectType === "*",
       );
       if (global) return global.enabled;
 
@@ -216,7 +218,7 @@ async function flushEventBuffer(cameraName: string) {
 
   if (eligibleSubscriptions.length === 0) {
     console.log(
-      "[Notification] Skipped: all subscriptions filtered by preferences"
+      "[Notification] Skipped: all subscriptions filtered by preferences",
     );
     return;
   }
@@ -232,15 +234,24 @@ async function flushEventBuffer(cameraName: string) {
     // Continue without snapshot
   }
 
-  // Build title: "Person, Car detected" or "Person detected"
+  // Build title: "Person on Guest House" or "Person & Car on Guest House"
   const labels = events.map(
-    (e) => e.label.charAt(0).toUpperCase() + e.label.slice(1)
+    (e) => e.label.charAt(0).toUpperCase() + e.label.slice(1),
   );
-  const title = `${labels.join(", ")} detected`;
+  const labelStr =
+    labels.length <= 2
+      ? labels.join(" & ")
+      : `${labels.slice(0, -1).join(", ")} & ${labels[labels.length - 1]}`;
+  const title = `${labelStr} on ${displayName}`;
+  const timeStr = new Date().toLocaleTimeString([], {
+    timeZone: process.env.TZ,
+    hour: "numeric",
+    minute: "2-digit",
+  });
 
   const notificationPayload: NotificationPayload = {
     title,
-    body: `${displayName} - ${new Date().toLocaleTimeString([], { timeZone: process.env.TZ })}`,
+    body: timeStr,
     icon: snapshotUrl || "/icon-192x192.png",
     badge: "/badge-mono.png",
     tag: `${cameraName}-batch`,
@@ -261,7 +272,7 @@ async function flushEventBuffer(cameraName: string) {
           endpoint: sub.endpoint,
           keys: { p256dh: sub.p256dh, auth: sub.auth },
         },
-        JSON.stringify(notificationPayload)
+        JSON.stringify(notificationPayload),
       );
       sentCount++;
     } catch (error: unknown) {
@@ -269,13 +280,13 @@ async function flushEventBuffer(cameraName: string) {
       const message = (error as { message?: string }).message;
       if (statusCode === 410 || statusCode === 404) {
         console.log(
-          `[Notification] Removing expired subscription: ${sub.endpoint.slice(0, 60)}...`
+          `[Notification] Removing expired subscription: ${sub.endpoint.slice(0, 60)}...`,
         );
         await prisma.pushSubscription.delete({ where: { id: sub.id } });
       } else {
         console.error(
           `[Notification] Failed to send push (HTTP ${statusCode}):`,
-          message || error
+          message || error,
         );
       }
     }
@@ -285,7 +296,7 @@ async function flushEventBuffer(cameraName: string) {
   cooldowns.set(cameraName, Date.now());
 
   console.log(
-    `[Notification] Sent ${sentCount}/${eligibleSubscriptions.length} notifications for [${labels.join(", ")}] on ${cameraName}`
+    `[Notification] Sent ${sentCount}/${eligibleSubscriptions.length} notifications for [${labels.join(", ")}] on ${cameraName}`,
   );
 
   // Log notification for each event in the batch
@@ -329,7 +340,9 @@ async function handleAudioEvent(payload: AudioEventPayload) {
     ? JSON.parse(audioSettingsRow.value)
     : DEFAULT_ENABLED_AUDIO;
   if (!globalAudio.includes(label)) {
-    console.log(`[Notification] Audio skipped: "${label}" not globally enabled`);
+    console.log(
+      `[Notification] Audio skipped: "${label}" not globally enabled`,
+    );
     return;
   }
 
@@ -339,7 +352,9 @@ async function handleAudioEvent(payload: AudioEventPayload) {
     .map((a) => a.trim())
     .filter(Boolean);
   if (!cameraAudio.includes(label)) {
-    console.log(`[Notification] Audio skipped: "${label}" not in camera "${cameraName}" audio list`);
+    console.log(
+      `[Notification] Audio skipped: "${label}" not in camera "${cameraName}" audio list`,
+    );
     return;
   }
 
@@ -348,7 +363,9 @@ async function handleAudioEvent(payload: AudioEventPayload) {
   const now = Date.now();
   const lastNotified = audioCooldowns.get(cooldownKey) || 0;
   if (now - lastNotified < AUDIO_COOLDOWN_MS) {
-    console.log(`[Notification] Audio skipped: cooldown active for ${cooldownKey}`);
+    console.log(
+      `[Notification] Audio skipped: cooldown active for ${cooldownKey}`,
+    );
     return;
   }
 
@@ -359,7 +376,9 @@ async function handleAudioEvent(payload: AudioEventPayload) {
   if (notifAudioRow) {
     const allowedAudio: string[] = JSON.parse(notifAudioRow.value);
     if (!allowedAudio.includes(label)) {
-      console.log(`[Notification] Audio skipped: "${label}" not in notification audio filter`);
+      console.log(
+        `[Notification] Audio skipped: "${label}" not in notification audio filter`,
+      );
       return;
     }
   }
@@ -373,9 +392,14 @@ async function handleAudioEvent(payload: AudioEventPayload) {
   const displayName = camera.name;
   const displayLabel = audioDef.label;
 
+  const audioTimeStr = new Date().toLocaleTimeString([], {
+    timeZone: process.env.TZ,
+    hour: "numeric",
+    minute: "2-digit",
+  });
   const notificationPayload: NotificationPayload = {
-    title: `${displayLabel} detected`,
-    body: `${displayName} - ${new Date().toLocaleTimeString([], { timeZone: process.env.TZ })}`,
+    title: `${displayLabel} on ${displayName}`,
+    body: audioTimeStr,
     icon: "/icon-192x192.png",
     badge: "/badge-mono.png",
     tag: `${cameraName}-audio-${label}`,
@@ -395,7 +419,7 @@ async function handleAudioEvent(payload: AudioEventPayload) {
           endpoint: sub.endpoint,
           keys: { p256dh: sub.p256dh, auth: sub.auth },
         },
-        JSON.stringify(notificationPayload)
+        JSON.stringify(notificationPayload),
       );
       sentCount++;
     } catch (error: unknown) {
@@ -409,6 +433,6 @@ async function handleAudioEvent(payload: AudioEventPayload) {
   audioCooldowns.set(cooldownKey, now);
 
   console.log(
-    `[Notification] Sent ${sentCount} audio notifications for ${label} on ${cameraName}`
+    `[Notification] Sent ${sentCount} audio notifications for ${label} on ${cameraName}`,
   );
 }
