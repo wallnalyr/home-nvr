@@ -151,12 +151,19 @@ async function checkStreamHealth(): Promise<void> {
     if (hasProducers) {
       // Producers exist — but is actual video data flowing?
       // Check Frigate's reported FPS for this camera.
-      const cameraFps = frigateStats?.[slug]?.camera_fps;
-      if (frigateStats && cameraFps !== undefined && cameraFps <= 0) {
+      if (!frigateStats) {
+        // Frigate stats unavailable (e.g. Frigate is restarting from our own
+        // config push). go2rtc keeps a producer entry while it retries an
+        // unreachable RTSP source, so producer presence alone can't tell a
+        // real connection from a retry. Hold state until we can verify FPS.
+        cameraHealth.set(slug, health);
+        continue;
+      }
+      const cameraFps = frigateStats[slug]?.camera_fps;
+      if (cameraFps !== undefined && cameraFps <= 0) {
         // Connected but no frames decoding — stale stream
         recordStale(slug, health, now);
       } else {
-        // Either FPS is healthy, or Frigate stats unavailable (don't penalize)
         recordSuccess(slug, health, now);
       }
     } else {
@@ -290,6 +297,9 @@ function recordSuccess(slug: string, health: CameraHealth, now: number): void {
 function recordStale(slug: string, health: CameraHealth, now: number): void {
   health.staleCount++;
   health.failCount = 0;
+  // A stale tick is not a recovery — wipe any progress accumulated from
+  // ticks where Frigate stats were briefly unavailable.
+  health.recoveryCount = 0;
 
   if (health.staleCount >= STALE_THRESHOLD && health.online) {
     health.online = false;
