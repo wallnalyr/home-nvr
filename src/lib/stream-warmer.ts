@@ -194,16 +194,10 @@ async function checkStreamHealth(): Promise<void> {
  * This triggers a Frigate restart which reinitializes go2rtc with
  * all stream definitions — the same thing a server restart does.
  *
- * We batch this: if multiple cameras are offline, one config push
- * restarts all streams. The flag prevents redundant pushes within
- * the same cycle.
+ * Concurrent calls (e.g. from multiple offline cameras in the same tick)
+ * are serialized and coalesced inside regenerateFrigateConfig itself.
  */
-let configPushPending = false;
-
 async function restartStream(slug: string): Promise<void> {
-  if (configPushPending) return;
-  configPushPending = true;
-
   try {
     const { regenerateFrigateConfig } =
       await import("@/lib/frigate-config-gen");
@@ -213,8 +207,6 @@ async function restartStream(slug: string): Promise<void> {
     );
   } catch (err) {
     console.error("[StreamWarmer] Config push for stream restart failed:", err);
-  } finally {
-    configPushPending = false;
   }
 }
 
