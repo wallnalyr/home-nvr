@@ -288,7 +288,7 @@ export async function generateFrigateConfig(): Promise<string> {
   });
 }
 
-export async function regenerateFrigateConfig(): Promise<void> {
+async function runRegenerate(): Promise<void> {
   const configYaml = await generateFrigateConfig();
   const configPath =
     process.env.FRIGATE_CONFIG_PATH || "/config/frigate/config.yml";
@@ -319,4 +319,41 @@ export async function regenerateFrigateConfig(): Promise<void> {
     }
     // File was written; Frigate will pick it up on next container restart
   }
+}
+
+// Serialize and coalesce concurrent pushes. Frigate's /api/config/save is not
+// safe under concurrent calls (ruamel.yaml parser state and disk writes race,
+// producing 400s with corrupted YAML errors), and each successful push triggers
+// a full Frigate restart. Callers that arrive while a push is in flight share
+// a single follow-up push, which re-runs after the current one and captures the
+// latest DB state — so API-driven saves still propagate without back-to-back
+// restarts.
+const globalForConfig = globalThis as unknown as {
+  __frigateConfigInFlight?: Promise<void> | null;
+  __frigateConfigQueued?: Promise<void> | null;
+};
+
+function runOnce(): Promise<void> {
+  const p = runRegenerate().finally(() => {
+    if (globalForConfig.__frigateConfigInFlight === p) {
+      globalForConfig.__frigateConfigInFlight = null;
+    }
+  });
+  globalForConfig.__frigateConfigInFlight = p;
+  return p;
+}
+
+export function regenerateFrigateConfig(): Promise<void> {
+  if (!globalForConfig.__frigateConfigInFlight) {
+    return runOnce();
+  }
+  if (!globalForConfig.__frigateConfigQueued) {
+    const after = () => {
+      globalForConfig.__frigateConfigQueued = null;
+      return runOnce();
+    };
+    globalForConfig.__frigateConfigQueued =
+      globalForConfig.__frigateConfigInFlight.then(after, after);
+  }
+  return globalForConfig.__frigateConfigQueued;
 }
