@@ -85,7 +85,8 @@ model NotificationPreference {
 
 model NotificationLog {
   id         String   @id @default(cuid())
-  eventId    String
+  reviewId   String?  // Frigate review item ID (since switch to frigate/reviews); null for legacy rows
+  eventId    String   // underlying Frigate event ID (detections[0]) used for snapshot/click-through
   camera     String
   objectType String
   sentAt     DateTime @default(now())

@@ -21,12 +21,14 @@ export function startMQTTListener() {
 
   client.on("connect", () => {
     console.log("[MQTT] Connected to broker");
-    // Object detection events
-    client!.subscribe("frigate/events", (err) => {
+    // Review items: Frigate groups continuous tracked-object activity into one
+    // review per camera. Subscribing here (instead of frigate/events) gives us
+    // one message per activity burst, matching the dedup Frigate's own UI uses.
+    client!.subscribe("frigate/reviews", (err) => {
       if (err) {
-        console.error("[MQTT] Subscribe error (events):", err);
+        console.error("[MQTT] Subscribe error (reviews):", err);
       } else {
-        console.log("[MQTT] Subscribed to frigate/events");
+        console.log("[MQTT] Subscribed to frigate/reviews");
       }
     });
     // Audio detection events: frigate/<camera>/audio/<label> → ON/OFF

@@ -8,26 +8,32 @@ import {
 } from "@/lib/objects";
 import type { NotificationPayload } from "@/types/notification";
 
-// Cooldown tracking: camera -> last notification timestamp
-const cooldowns = new Map<string, number>();
 // Audio cooldown: camera-label -> last notification timestamp
 const audioCooldowns = new Map<string, number>();
 
-// Batch buffer: collect events per-camera for 2 seconds before sending
-const BATCH_WINDOW_MS = 2000;
+// Recently-notified review IDs. Frigate should only emit `new` once per review,
+// but guard against MQTT redelivery and listener restart races. Entries auto-expire.
+const recentReviewIds = new Map<string, number>();
+const REVIEW_DEDUP_TTL_MS = 10 * 60 * 1000;
 
-interface BufferedEvent {
-  label: string;
-  eventId: string;
-  cameraName: string;
+function rememberReviewId(reviewId: string) {
+  const now = Date.now();
+  recentReviewIds.set(reviewId, now);
+  // Opportunistic cleanup to keep the map bounded
+  for (const [id, ts] of recentReviewIds) {
+    if (now - ts > REVIEW_DEDUP_TTL_MS) recentReviewIds.delete(id);
+  }
 }
 
-interface CameraBatch {
-  events: BufferedEvent[];
-  timer: ReturnType<typeof setTimeout>;
+function alreadyNotifiedReview(reviewId: string): boolean {
+  const ts = recentReviewIds.get(reviewId);
+  if (!ts) return false;
+  if (Date.now() - ts > REVIEW_DEDUP_TTL_MS) {
+    recentReviewIds.delete(reviewId);
+    return false;
+  }
+  return true;
 }
-
-const eventBuffers = new Map<string, CameraBatch>();
 
 interface AudioEventPayload {
   _audio: true;
@@ -36,24 +42,24 @@ interface AudioEventPayload {
   state: string;
 }
 
-interface FrigateEventPayload {
-  type: string;
-  before: {
-    id: string;
-    camera: string;
-    label: string;
-    top_score: number;
-    current_zones: string[];
-    has_snapshot: boolean;
+interface FrigateReviewSegment {
+  id: string;
+  camera: string;
+  severity: "alert" | "detection";
+  start_time: number;
+  end_time: number | null;
+  data: {
+    objects: string[];
+    sub_labels?: string[];
+    zones?: string[];
+    detections: string[];
   };
-  after: {
-    id: string;
-    camera: string;
-    label: string;
-    top_score: number;
-    current_zones: string[];
-    has_snapshot: boolean;
-  };
+}
+
+interface FrigateReviewPayload {
+  type: "new" | "update" | "end";
+  before: FrigateReviewSegment | null;
+  after: FrigateReviewSegment;
 }
 
 export async function handleFrigateEvent(payload: unknown) {
@@ -63,17 +69,42 @@ export async function handleFrigateEvent(payload: unknown) {
     return;
   }
 
-  const event = payload as FrigateEventPayload;
+  // Treat everything else as a frigate/reviews payload
+  const review = payload as FrigateReviewPayload;
 
-  // Only process new events
-  if (event.type !== "new") return;
+  // Only fire on the start of a new review. `update` events fire mid-review
+  // when new objects/zones appear; `end` fires when activity stops. We only
+  // want one push per review, so ignore the rest.
+  if (review.type !== "new") return;
 
-  const { after } = event;
-  const { camera: cameraName, label, id: eventId } = after;
+  const { after } = review;
+  if (!after || !after.id || !after.camera || !after.data) return;
+
+  const {
+    id: reviewId,
+    camera: cameraName,
+    severity,
+    data: { objects = [], detections = [] },
+  } = after;
+
+  if (alreadyNotifiedReview(reviewId)) {
+    console.log(
+      `[Notification] Skipped: review ${reviewId} already notified`,
+    );
+    return;
+  }
+  // Mark before any awaits so a duplicate delivery of the same review that
+  // arrives while we're inside DB queries can't slip past the dedup check.
+  rememberReviewId(reviewId);
 
   console.log(
-    `[Notification] New event: ${label} on ${cameraName} (${eventId})`,
+    `[Notification] New review: ${severity} on ${cameraName} (${reviewId}) objects=[${objects.join(",")}]`,
   );
+
+  if (objects.length === 0) {
+    console.log(`[Notification] Skipped: review ${reviewId} has no objects`);
+    return;
+  }
 
   // Look up camera in DB by slug (Frigate uses slug as camera identifier)
   const camera = await prisma.camera.findFirst({
@@ -86,96 +117,41 @@ export async function handleFrigateEvent(payload: unknown) {
     return;
   }
 
-  // Check global enabled_objects setting
-  const objectsRow = await prisma.systemConfig.findUnique({
+  // Apply per-camera, global, and notification-filter object lists to the
+  // review's object set. The review fires for whatever Frigate tracked; we
+  // narrow it down to only labels the user actually wants notifications for.
+  const globalObjectsRow = await prisma.systemConfig.findUnique({
     where: { key: "enabled_objects" },
   });
-  const globalObjects: string[] = objectsRow
-    ? JSON.parse(objectsRow.value)
+  const globalObjects: string[] = globalObjectsRow
+    ? JSON.parse(globalObjectsRow.value)
     : DEFAULT_ENABLED_OBJECTS;
-  if (!globalObjects.includes(label)) {
-    console.log(`[Notification] Skipped: "${label}" not globally enabled`);
-    return;
-  }
 
-  // Check per-camera objectsTrack
   const cameraObjects = camera.objectsTrack
     .split(",")
     .map((o) => o.trim())
     .filter(Boolean);
-  if (!cameraObjects.includes(label)) {
-    console.log(
-      `[Notification] Skipped: "${label}" not tracked by camera "${cameraName}"`,
-    );
-    return;
-  }
 
-  // Check cooldown — only block if no active batch (batch window acts as its own collector)
-  const now = Date.now();
-  const lastNotified = cooldowns.get(cameraName) || 0;
-  const hasBatch = eventBuffers.has(cameraName);
-  if (!hasBatch && now - lastNotified < camera.notifyCooldownSec * 1000) {
-    console.log(
-      `[Notification] Skipped: cooldown active for ${cameraName} (${camera.notifyCooldownSec}s)`,
-    );
-    return;
-  }
-
-  // Check notification object filter
   const notifObjRow = await prisma.systemConfig.findUnique({
     where: { key: "notification_objects" },
   });
-  if (notifObjRow) {
-    const allowedObjects: string[] = JSON.parse(notifObjRow.value);
-    if (!allowedObjects.includes(label)) {
-      console.log(
-        `[Notification] Skipped: "${label}" not in notification objects filter`,
-      );
-      return;
-    }
-  }
+  const notifAllowed: string[] | null = notifObjRow
+    ? JSON.parse(notifObjRow.value)
+    : null;
 
-  // Add to batch buffer
-  const existing = eventBuffers.get(cameraName);
-  if (existing) {
-    // Don't duplicate the same label in one batch
-    if (!existing.events.some((e) => e.label === label)) {
-      existing.events.push({ label, eventId, cameraName });
-      console.log(
-        `[Notification] Batched: ${label} on ${cameraName} (${existing.events.length} in batch)`,
-      );
-    }
-  } else {
-    // Start a new batch with a 2-second timer
-    const timer = setTimeout(() => {
-      flushEventBuffer(cameraName).catch((err) => {
-        console.error("[Notification] Error flushing batch:", err);
-      });
-    }, BATCH_WINDOW_MS);
+  const allowedLabels = objects.filter(
+    (label) =>
+      globalObjects.includes(label) &&
+      cameraObjects.includes(label) &&
+      (!notifAllowed || notifAllowed.includes(label)),
+  );
 
-    eventBuffers.set(cameraName, {
-      events: [{ label, eventId, cameraName }],
-      timer,
-    });
+  if (allowedLabels.length === 0) {
     console.log(
-      `[Notification] Buffered: ${label} on ${cameraName} (2s batch window started)`,
+      `[Notification] Skipped: no allowed labels in review ${reviewId} (had [${objects.join(",")}])`,
     );
+    return;
   }
-}
-
-async function flushEventBuffer(cameraName: string) {
-  const batch = eventBuffers.get(cameraName);
-  eventBuffers.delete(cameraName);
-  if (!batch || batch.events.length === 0) return;
-
-  const { events } = batch;
-  const firstEvent = events[0];
-
-  // Look up camera for display name
-  const camera = await prisma.camera.findFirst({
-    where: { slug: cameraName },
-  });
-  const displayName = camera?.name || cameraName;
 
   // Get all push subscriptions with preferences
   const subscriptions = await prisma.pushSubscription.findMany({
@@ -187,13 +163,13 @@ async function flushEventBuffer(cameraName: string) {
     return;
   }
 
-  // Filter subscriptions — eligible if ANY label in the batch is allowed
+  // Per-subscription preferences. A subscription is eligible if ANY label in
+  // the review's allowed-label set passes the preference cascade.
   const eligibleSubscriptions = subscriptions.filter((sub) => {
     const prefs = sub.preferences;
-
-    return events.some((evt) => {
+    return allowedLabels.some((label) => {
       const specific = prefs.find(
-        (p) => p.camera === cameraName && p.objectType === evt.label,
+        (p) => p.camera === cameraName && p.objectType === label,
       );
       if (specific) return specific.enabled;
 
@@ -203,7 +179,7 @@ async function flushEventBuffer(cameraName: string) {
       if (cameraAll) return cameraAll.enabled;
 
       const allCameraSpecific = prefs.find(
-        (p) => p.camera === "*" && p.objectType === evt.label,
+        (p) => p.camera === "*" && p.objectType === label,
       );
       if (allCameraSpecific) return allCameraSpecific.enabled;
 
@@ -223,25 +199,32 @@ async function flushEventBuffer(cameraName: string) {
     return;
   }
 
-  // Fetch snapshot from the first event
+  // Use the first detection's event ID for snapshot + click-through. Review
+  // payloads don't carry snapshots directly — they reference underlying events.
+  const firstDetectionId = detections[0];
+
   let snapshotUrl: string | undefined;
-  try {
-    const snapshotRes = await getFrigateEventSnapshot(firstEvent.eventId);
-    if (snapshotRes.ok) {
-      snapshotUrl = `/api/frigate/events/${firstEvent.eventId}/snapshot`;
+  if (firstDetectionId) {
+    try {
+      const snapshotRes = await getFrigateEventSnapshot(firstDetectionId);
+      if (snapshotRes.ok) {
+        snapshotUrl = `/api/frigate/events/${firstDetectionId}/snapshot`;
+      }
+    } catch {
+      // Continue without snapshot
     }
-  } catch {
-    // Continue without snapshot
   }
 
+  const displayName = camera.name || cameraName;
+
   // Build title: "Person on Guest House" or "Person & Car on Guest House"
-  const labels = events.map(
-    (e) => e.label.charAt(0).toUpperCase() + e.label.slice(1),
+  const labelTitles = allowedLabels.map(
+    (l) => l.charAt(0).toUpperCase() + l.slice(1),
   );
   const labelStr =
-    labels.length <= 2
-      ? labels.join(" & ")
-      : `${labels.slice(0, -1).join(", ")} & ${labels[labels.length - 1]}`;
+    labelTitles.length <= 2
+      ? labelTitles.join(" & ")
+      : `${labelTitles.slice(0, -1).join(", ")} & ${labelTitles[labelTitles.length - 1]}`;
   const title = `${labelStr} on ${displayName}`;
   const timeStr = new Date().toLocaleTimeString([], {
     timeZone: process.env.TZ,
@@ -249,17 +232,21 @@ async function flushEventBuffer(cameraName: string) {
     minute: "2-digit",
   });
 
+  // Click-through targets the underlying event so the existing /events/[id]
+  // page (which reads Frigate's REST API) renders without changes.
+  const clickEventId = firstDetectionId || reviewId;
+
   const notificationPayload: NotificationPayload = {
     title,
     body: timeStr,
     icon: snapshotUrl || "/icon-192x192.png",
     badge: "/badge-mono.png",
-    tag: `${cameraName}-batch`,
+    tag: `${cameraName}-review-${reviewId}`,
     data: {
-      url: `/events/${firstEvent.eventId}`,
-      eventId: firstEvent.eventId,
+      url: `/events/${clickEventId}`,
+      eventId: clickEventId,
       camera: cameraName,
-      objectType: events.map((e) => e.label).join(","),
+      objectType: allowedLabels.join(","),
     },
   };
 
@@ -292,20 +279,20 @@ async function flushEventBuffer(cameraName: string) {
     }
   }
 
-  // Update cooldown after batch is sent
-  cooldowns.set(cameraName, Date.now());
-
   console.log(
-    `[Notification] Sent ${sentCount}/${eligibleSubscriptions.length} notifications for [${labels.join(", ")}] on ${cameraName}`,
+    `[Notification] Sent ${sentCount}/${eligibleSubscriptions.length} notifications for [${labelTitles.join(", ")}] on ${cameraName} (review ${reviewId})`,
   );
 
-  // Log notification for each event in the batch
-  for (const evt of events) {
+  // One log row per label in the review, keyed by review ID for dedup
+  // analysis. eventId stores the underlying detection ID for traceability
+  // back into Frigate's events API.
+  for (const label of allowedLabels) {
     await prisma.notificationLog.create({
       data: {
-        eventId: evt.eventId,
+        reviewId,
+        eventId: clickEventId,
         camera: cameraName,
-        objectType: evt.label,
+        objectType: label,
         sentCount,
         snapshotUrl,
       },
