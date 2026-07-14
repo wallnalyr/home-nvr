@@ -30,10 +30,14 @@ export function EventGrid({
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  // Reset visible count when the event list changes (filters, new data)
-  useEffect(() => {
+  // Reset visible count when the event list changes (filters, new data).
+  // Adjusted during render so the reset commits in the same frame as the
+  // new list instead of one render later.
+  const [prevEvents, setPrevEvents] = useState(events);
+  if (events !== prevEvents) {
+    setPrevEvents(events);
     setVisibleCount(PAGE_SIZE);
-  }, [events]);
+  }
 
   // IntersectionObserver to load more when the sentinel enters the viewport
   useEffect(() => {

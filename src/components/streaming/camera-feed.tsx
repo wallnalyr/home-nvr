@@ -28,41 +28,26 @@ export const CameraFeed = memo(function CameraFeed({
   const isLive = status === "live" && !serverOffline;
 
   // Track whether the stream was ever live — used to decide if we have
-  // a snapshot to show during interruptions
-  const wasLiveRef = useRef(false);
-  if (isLive) wasLiveRef.current = true;
+  // a snapshot to show during interruptions. Latched during render so it
+  // is in sync with the same render that shows the live stream.
+  const [wasLive, setWasLive] = useState(false);
+  if (isLive && !wasLive) setWasLive(true);
 
   // Grace period: when stream drops, show last frame + small spinner
   // for GRACE_PERIOD_MS before switching to full offline state
   const [graceExpired, setGraceExpired] = useState(false);
-  const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  if (isLive && graceExpired) setGraceExpired(false);
 
+  // Run the grace timer exactly while the stream is dropped after
+  // having been live; cleanup cancels it if the stream recovers
   useEffect(() => {
-    if (isLive) {
-      // Stream is live — clear any grace timer and reset
-      if (graceTimerRef.current) {
-        clearTimeout(graceTimerRef.current);
-        graceTimerRef.current = null;
-      }
-      setGraceExpired(false);
-    } else if (wasLiveRef.current && !graceExpired && !graceTimerRef.current) {
-      // Stream just dropped after being live — start grace period
-      graceTimerRef.current = setTimeout(() => {
-        graceTimerRef.current = null;
-        setGraceExpired(true);
-      }, GRACE_PERIOD_MS);
-    }
-
-    return () => {
-      if (graceTimerRef.current) {
-        clearTimeout(graceTimerRef.current);
-        graceTimerRef.current = null;
-      }
-    };
-  }, [isLive, graceExpired]);
+    if (isLive || !wasLive || graceExpired) return;
+    const timer = setTimeout(() => setGraceExpired(true), GRACE_PERIOD_MS);
+    return () => clearTimeout(timer);
+  }, [isLive, wasLive, graceExpired]);
 
   // During grace period: show snapshot background with small spinner
-  const inGracePeriod = !isLive && wasLiveRef.current && !graceExpired;
+  const inGracePeriod = !isLive && wasLive && !graceExpired;
   // Full offline state: grace period expired or server confirmed offline
   const showFullOffline = serverOffline && !inGracePeriod;
   const showClientOffline = status === "offline" && !serverOffline && !inGracePeriod;
