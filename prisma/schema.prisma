@@ -98,3 +98,13 @@ model SystemConfig {
   key   String @id
   value String
 }
+
+model AuthSession {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique // sha256 of the opaque session token
+  username   String
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+  expiresAt  DateTime // sliding — extended on each successful refresh
+}

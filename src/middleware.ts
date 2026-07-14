@@ -12,7 +12,7 @@ const PUBLIC_PATHS = [
   "/login",
   "/api/auth/login",
   "/api/auth/logout",
-  "/api/auth/restore",
+  "/api/auth/refresh",
   "/api/system/health",
   "/manifest.json",
   "/manifest.webmanifest",
