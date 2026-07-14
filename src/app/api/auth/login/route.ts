@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { signToken, setAuthCookie } from "@/lib/auth";
+import {
+  signToken,
+  setAuthCookie,
+  createSession,
+  setSessionCookie,
+} from "@/lib/auth";
 
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 
@@ -89,12 +94,19 @@ export async function POST(request: NextRequest) {
     const token = await signToken({ sub: username });
     await setAuthCookie(token);
 
+    // Long-lived revocable session, used to silently re-establish the
+    // auth cookie when iOS purges it. Returned in the body so the
+    // client can keep a localStorage backup that survives cookie purges.
+    const sessionToken = await createSession(
+      username,
+      request.headers.get("user-agent"),
+    );
+    await setSessionCookie(sessionToken);
+
     // Reset rate limit on success
     loginAttempts.delete(ip);
 
-    // Return token in body so the client can persist it in localStorage
-    // as a fallback for iOS PWA cookie purging
-    return NextResponse.json({ success: true, token });
+    return NextResponse.json({ success: true, sessionToken });
   } catch {
     return NextResponse.json(
       { error: "Internal server error" },

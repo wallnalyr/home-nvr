@@ -33,9 +33,9 @@ export function LoginForm() {
         return;
       }
 
-      if (data.token) {
+      if (data.sessionToken) {
         try {
-          localStorage.setItem("auth-token-backup", data.token);
+          localStorage.setItem("session-token-backup", data.sessionToken);
         } catch {}
       }
 

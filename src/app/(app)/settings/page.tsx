@@ -23,6 +23,7 @@ export default function SettingsPage() {
     setLoggingOut(true);
     await fetch("/api/auth/logout", { method: "POST" });
     try {
+      localStorage.removeItem("session-token-backup");
       localStorage.removeItem("auth-token-backup");
     } catch {}
     router.push("/login");
