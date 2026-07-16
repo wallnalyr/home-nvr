@@ -23,7 +23,7 @@ function formatTime(seconds: number): string {
 
 interface ZoomableVideoShellProps {
   videoRef: React.RefObject<HTMLVideoElement | null>;
-  /** Parent player state — gates the expand button and video visibility */
+  /** Parent player state — media is loaded and watchable */
   playing: boolean;
   poster?: string;
   startMuted?: boolean;
@@ -34,15 +34,17 @@ interface ZoomableVideoShellProps {
 }
 
 /**
- * Shared inline-player shell with a pinch-zoomable fullscreen mode.
+ * Video player shell with custom controls and a pinch-zoomable
+ * fullscreen mode. One control bar (play/pause, scrubber, time, mute,
+ * expand) serves both inline and fullscreen — native browser controls
+ * are never used: they render inside the video element's box, so the
+ * fullscreen pinch transform would scale and drift them, and the iOS
+ * native fullscreen button would route around our zoomable overlay.
  *
- * Inline it renders the video with native browser controls. The expand
- * button switches the same container to a fixed overlay — the video
- * element never moves in the DOM, so HLS playback is not interrupted.
- * In fullscreen, native controls are swapped for custom ones: native
- * controls render inside the video element's box and would scale and
- * drift along with the pinch-zoom transform. Same overlay/gesture/audio
- * approach as the live CameraFeed.
+ * The video element never moves in the DOM between modes, so HLS
+ * playback is not interrupted. Pinch-zoom is fullscreen-only: inline
+ * gestures inside a scrollable page fight scrolling (the cause of the
+ * reverted first zoom attempt).
  */
 export function ZoomableVideoShell({
   videoRef,
@@ -60,7 +62,7 @@ export function ZoomableVideoShell({
     handlers: zoomHandlers,
   } = usePinchZoom(isFullscreen);
 
-  // Playback state mirrored for the custom fullscreen controls
+  // Playback state mirrored for the custom controls
   const [paused, setPaused] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -68,7 +70,6 @@ export function ZoomableVideoShell({
   const [scrubTime, setScrubTime] = useState(0);
 
   useEffect(() => {
-    if (!isFullscreen) return;
     const video = videoRef.current;
     if (!video) return;
 
@@ -102,7 +103,7 @@ export function ZoomableVideoShell({
       video.removeEventListener("pause", onPlayState);
       video.removeEventListener("volumechange", onVolume);
     };
-  }, [isFullscreen, scrubbing, videoRef]);
+  }, [scrubbing, videoRef]);
 
   const enterFullscreen = useCallback(() => {
     const video = videoRef.current;
@@ -199,6 +200,11 @@ export function ZoomableVideoShell({
     setScrubbing(false);
   }, [videoRef, scrubTime]);
 
+  const barBtn =
+    "flex items-center justify-center shrink-0 rounded-full bg-black/50 text-white/90 backdrop-blur-sm";
+  const btnSize = isFullscreen ? "h-10 w-10" : "h-8 w-8";
+  const iconSize = isFullscreen ? "h-5 w-5" : "h-4 w-4";
+
   return (
     <div
       ref={zoomContainerRef}
@@ -220,13 +226,12 @@ export function ZoomableVideoShell({
       <div
         ref={zoomTargetRef}
         className={cn("absolute inset-0", isFullscreen && "will-change-transform")}
+        onClick={!isFullscreen && playing ? togglePlay : undefined}
       >
         <video
           ref={videoRef}
           poster={poster}
           muted={startMuted}
-          controls={!isFullscreen}
-          controlsList="nofullscreen"
           playsInline
           className={cn(
             "absolute inset-0 w-full h-full object-contain transition-opacity duration-300",
@@ -238,100 +243,110 @@ export function ZoomableVideoShell({
       {/* Parent status overlays (loading / error / expired snapshot) */}
       {children}
 
-      {/* Inline expand button */}
-      {!isFullscreen && playing && (
-        <button
-          onClick={enterFullscreen}
-          aria-label="Fullscreen"
-          className="absolute top-2 right-2 z-10 flex items-center justify-center h-9 w-9 rounded-full bg-black/50 text-white/80 backdrop-blur-sm"
+      {/* Fullscreen top bar: title + close */}
+      {isFullscreen && (
+        <div
+          className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between gap-2 px-4 pb-8 bg-gradient-to-b from-black/60 to-transparent"
+          style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
+          onPointerDown={stopPointer}
         >
-          <Maximize2 className="h-4 w-4" />
-        </button>
+          <span className="text-sm font-semibold text-white/90 truncate">
+            {title}
+          </span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              exitFullscreen();
+            }}
+            aria-label="Exit fullscreen"
+            className={cn(barBtn, "h-10 w-10 text-white/80")}
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
       )}
 
-      {/* Fullscreen chrome */}
-      {isFullscreen && (
-        <>
-          {/* Top bar: title, sound, close */}
-          <div
-            className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between gap-2 px-4 pb-8 bg-gradient-to-b from-black/60 to-transparent"
-            style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
-            onPointerDown={stopPointer}
+      {/* Control bar — same controls inline and fullscreen */}
+      {playing && (
+        <div
+          className={cn(
+            "absolute bottom-0 left-0 right-0 z-10 flex items-center bg-gradient-to-t from-black/60 to-transparent",
+            isFullscreen ? "gap-3 px-4 pt-8" : "gap-2 px-3 pt-6 pb-2"
+          )}
+          style={
+            isFullscreen
+              ? { paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)" }
+              : undefined
+          }
+          onPointerDown={stopPointer}
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePlay();
+            }}
+            aria-label={paused ? "Play" : "Pause"}
+            className={cn(barBtn, btnSize)}
           >
-            <span className="text-sm font-semibold text-white/90 truncate">
-              {title}
-            </span>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleMute();
-                }}
-                aria-label={muted ? "Unmute" : "Mute"}
-                className="flex items-center justify-center h-10 w-10 rounded-full bg-black/50 text-white/80 backdrop-blur-sm"
-              >
-                {muted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  exitFullscreen();
-                }}
-                aria-label="Exit fullscreen"
-                className="flex items-center justify-center h-10 w-10 rounded-full bg-black/50 text-white/80 backdrop-blur-sm"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-          </div>
-
-          {/* Bottom bar: play/pause, scrubber, time */}
-          <div
-            className="absolute bottom-0 left-0 right-0 z-10 flex items-center gap-3 px-4 pt-8 bg-gradient-to-t from-black/60 to-transparent"
-            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)" }}
-            onPointerDown={stopPointer}
+            {paused ? <Play className={iconSize} /> : <Pause className={iconSize} />}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={duration || 0}
+            step={0.1}
+            value={scrubbing ? scrubTime : currentTime}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              setScrubbing(true);
+              setScrubTime(currentTime);
+            }}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setScrubTime(v);
+              if (!scrubbing) {
+                // Keyboard / non-pointer change — seek immediately
+                const video = videoRef.current;
+                if (video) video.currentTime = v;
+                setCurrentTime(v);
+              }
+            }}
+            onPointerUp={commitScrub}
+            onPointerCancel={commitScrub}
+            aria-label="Seek"
+            className="flex-1 min-w-0 h-1.5 accent-white cursor-pointer touch-none"
+          />
+          <span
+            className={cn(
+              "tabular-nums text-white/80 shrink-0",
+              isFullscreen ? "text-xs" : "text-[10px]"
+            )}
           >
+            {formatTime(scrubbing ? scrubTime : currentTime)} / {formatTime(duration)}
+          </span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleMute();
+            }}
+            aria-label={muted ? "Unmute" : "Mute"}
+            className={cn(barBtn, btnSize, "text-white/80")}
+          >
+            {muted ? <VolumeX className={iconSize} /> : <Volume2 className={iconSize} />}
+          </button>
+          {!isFullscreen && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                togglePlay();
+                enterFullscreen();
               }}
-              aria-label={paused ? "Play" : "Pause"}
-              className="flex items-center justify-center h-10 w-10 shrink-0 rounded-full bg-black/50 text-white/90 backdrop-blur-sm"
+              aria-label="Fullscreen"
+              className={cn(barBtn, btnSize, "text-white/80")}
             >
-              {paused ? <Play className="h-5 w-5" /> : <Pause className="h-5 w-5" />}
+              <Maximize2 className={iconSize} />
             </button>
-            <input
-              type="range"
-              min={0}
-              max={duration || 0}
-              step={0.1}
-              value={scrubbing ? scrubTime : currentTime}
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                setScrubbing(true);
-                setScrubTime(currentTime);
-              }}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setScrubTime(v);
-                if (!scrubbing) {
-                  // Keyboard / non-pointer change — seek immediately
-                  const video = videoRef.current;
-                  if (video) video.currentTime = v;
-                  setCurrentTime(v);
-                }
-              }}
-              onPointerUp={commitScrub}
-              onPointerCancel={commitScrub}
-              aria-label="Seek"
-              className="flex-1 h-1.5 accent-white cursor-pointer"
-            />
-            <span className="text-xs tabular-nums text-white/80 shrink-0">
-              {formatTime(scrubbing ? scrubTime : currentTime)} / {formatTime(duration)}
-            </span>
-          </div>
-        </>
+          )}
+        </div>
       )}
     </div>
   );
