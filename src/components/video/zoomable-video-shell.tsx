@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
+import { useImmersive } from "@/hooks/use-immersive";
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -61,6 +62,7 @@ export function ZoomableVideoShell({
     targetRef: zoomTargetRef,
     handlers: zoomHandlers,
   } = usePinchZoom(isFullscreen);
+  useImmersive(isFullscreen);
 
   // Playback state mirrored for the custom controls
   const [paused, setPaused] = useState(true);
