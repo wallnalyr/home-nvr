@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Loader2, VideoOff } from "lucide-react";
+import { ZoomableVideoShell } from "@/components/video/zoomable-video-shell";
 
 interface RecordingPlayerProps {
   camera: string;
@@ -112,17 +113,11 @@ export function RecordingPlayer({
   }, [camera, startTime, endTime]);
 
   return (
-    <div className="camera-feed-container rounded-xl overflow-hidden bg-black">
-      <video
-        ref={videoRef}
-        controls
-        playsInline
-        className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
-          playerState === "playing"
-            ? "opacity-100"
-            : "opacity-0 pointer-events-none"
-        }`}
-      />
+    <ZoomableVideoShell
+      videoRef={videoRef}
+      playing={playerState === "playing"}
+      title={camera}
+    >
       {playerState === "loading" && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/70">
           <Loader2 className="h-8 w-8 animate-spin" />
@@ -141,6 +136,6 @@ export function RecordingPlayer({
           <span className="text-xs">Failed to load recording</span>
         </div>
       )}
-    </div>
+    </ZoomableVideoShell>
   );
 }
