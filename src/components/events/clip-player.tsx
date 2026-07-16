@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Clock, Loader2, VideoOff } from "lucide-react";
+import { ZoomableVideoShell } from "@/components/video/zoomable-video-shell";
 
 type ClipState = "loading" | "playing" | "error" | "expired";
 
@@ -133,17 +134,12 @@ export function ClipPlayer({ eventId }: ClipPlayerProps) {
   }, [loadClip, cleanup]);
 
   return (
-    <div className="camera-feed-container rounded-xl overflow-hidden bg-black">
-      <video
-        ref={videoRef}
-        poster={`/api/frigate/events/${eventId}/snapshot`}
-        muted
-        controls
-        playsInline
-        className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
-          state === "playing" ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
-      />
+    <ZoomableVideoShell
+      videoRef={videoRef}
+      playing={state === "playing"}
+      poster={`/api/frigate/events/${eventId}/snapshot`}
+      startMuted
+    >
       {state === "loading" && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/70">
           <Loader2 className="h-8 w-8 animate-spin" />
@@ -176,6 +172,6 @@ export function ClipPlayer({ eventId }: ClipPlayerProps) {
           <span className="text-xs">Failed to load clip</span>
         </div>
       )}
-    </div>
+    </ZoomableVideoShell>
   );
 }
