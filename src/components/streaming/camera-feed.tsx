@@ -2,8 +2,9 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Loader2, VideoOff } from "lucide-react";
+import { Loader2, VideoOff, Volume2, VolumeX, X } from "lucide-react";
 import { useGo2rtcStream } from "@/hooks/use-go2rtc-stream";
+import { usePinchZoom } from "@/hooks/use-pinch-zoom";
 
 // Show last snapshot with small spinner for this long before full offline state
 const GRACE_PERIOD_MS = 15000;
@@ -63,59 +64,116 @@ export const CameraFeed = memo(function CameraFeed({
     }
   }, [serverOffline, status, retry]);
 
-  // Unmute on native fullscreen, re-mute on exit
+  // --- Fullscreen with pinch-zoom ---
+  //
+  // iOS native video fullscreen (webkitEnterFullscreen) hands the video
+  // to the system player, where CSS transforms — and therefore
+  // pinch-zoom — cannot work. Instead the feed expands into a fixed
+  // overlay that stays in the web rendering context. The video element
+  // never moves in the DOM, so the WebRTC/MSE stream is not
+  // interrupted. Where element fullscreen is supported (iPad, desktop)
+  // the CONTAINER is additionally fullscreened natively — transforms
+  // inside it keep working.
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const {
+    containerRef: zoomContainerRef,
+    targetRef: zoomTargetRef,
+    handlers: zoomHandlers,
+  } = usePinchZoom(isFullscreen);
+
+  // iOS blocks play() on an unmuted video outside a user gesture. If
+  // the stream reconnects mid-fullscreen (stall retry, network blip),
+  // the retry's play() would be rejected and the feed would die into
+  // "offline". Mute before the reconnect lands; the user can unmute
+  // again with the sound button.
+  const [prevStatus, setPrevStatus] = useState(status);
+  if (status !== prevStatus) {
+    setPrevStatus(status);
+    if (isFullscreen && status !== "live" && !muted) setMuted(true);
+  }
+
+  // Keep the video element in sync with muted state (handlers also set
+  // it directly so the change lands inside the same user gesture)
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (video) video.muted = muted;
+  }, [muted, videoRef]);
 
-    const onFullscreenChange = () => {
-      const isFs =
-        !!document.fullscreenElement ||
-        !!(document as unknown as { webkitFullscreenElement?: Element }).webkitFullscreenElement;
-      video.muted = !isFs;
-      setFullscreen(isFs);
-      if (!isFs) {
-        recover();
-      }
-    };
-
-    const onIOSEnd = () => {
-      video.muted = true;
-      setFullscreen(false);
-      recover();
-    };
-    const onIOSBegin = () => {
-      video.muted = false;
-      setFullscreen(true);
-    };
-
-    video.addEventListener("webkitendfullscreen", onIOSEnd);
-    video.addEventListener("webkitbeginfullscreen", onIOSBegin);
-    document.addEventListener("fullscreenchange", onFullscreenChange);
-    document.addEventListener("webkitfullscreenchange", onFullscreenChange);
-
-    return () => {
-      video.removeEventListener("webkitendfullscreen", onIOSEnd);
-      video.removeEventListener("webkitbeginfullscreen", onIOSBegin);
-      document.removeEventListener("fullscreenchange", onFullscreenChange);
-      document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
-    };
-  }, [videoRef, recover, setFullscreen]);
-
-  const handleTap = useCallback(() => {
+  const enterFullscreen = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    video.muted = false;
+    setIsFullscreen(true);
+    setFullscreen(true);
 
-    if ("webkitEnterFullscreen" in video) {
-      (video as HTMLVideoElement & { webkitEnterFullscreen: () => void }).webkitEnterFullscreen();
-    } else if (video.requestFullscreen) {
-      video.requestFullscreen().catch(() => {
-        video.muted = true;
-      });
+    // Unmute + play inside the tap gesture — required by the iOS
+    // autoplay policy for any audio start. If it still rejects, fall
+    // back to muted; the sound button retries inside its own gesture.
+    video.muted = false;
+    setMuted(false);
+    video.play().catch(() => {
+      video.muted = true;
+      setMuted(true);
+    });
+
+    // Element fullscreen is unavailable on iPhone — the CSS overlay
+    // alone is the fullscreen experience there.
+    const el = zoomContainerRef.current;
+    if (el?.requestFullscreen) {
+      el.requestFullscreen().catch(() => {});
     }
-  }, [videoRef]);
+  }, [videoRef, setFullscreen, zoomContainerRef]);
+
+  const exitFullscreen = useCallback(() => {
+    const video = videoRef.current;
+    if (video) video.muted = true;
+    setMuted(true);
+    setIsFullscreen(false);
+    setFullscreen(false);
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+    recover();
+  }, [videoRef, setFullscreen, recover]);
+
+  const toggleMute = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (muted) {
+      video.muted = false;
+      setMuted(false);
+      video.play().catch(() => {
+        video.muted = true;
+        setMuted(true);
+      });
+    } else {
+      video.muted = true;
+      setMuted(true);
+    }
+  }, [videoRef, muted]);
+
+  // Follow native fullscreen exits (Escape key, system gesture)
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const onChange = () => {
+      if (!document.fullscreenElement) exitFullscreen();
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, [isFullscreen, exitFullscreen]);
+
+  // Backgrounding the app tears down streams (visibilitychange in the
+  // stream hook). Exit fullscreen so the reconnect on return starts
+  // muted and is allowed to autoplay.
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const onVis = () => {
+      if (document.visibilityState === "hidden") exitFullscreen();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [isFullscreen, exitFullscreen]);
 
   const handleRetry = useCallback(
     (e: React.MouseEvent) => {
@@ -124,6 +182,10 @@ export const CameraFeed = memo(function CameraFeed({
     },
     [retry]
   );
+
+  // Keep grid scroll + pull-to-refresh blind to fullscreen gestures
+  const stopTouch = useCallback((e: React.TouchEvent) => e.stopPropagation(), []);
+  const stopPointer = useCallback((e: React.PointerEvent) => e.stopPropagation(), []);
 
   return (
     <div className={cn("flex flex-col", className)}>
@@ -170,25 +232,60 @@ export const CameraFeed = memo(function CameraFeed({
         ) : null}
       </div>
 
-      {/* Camera feed */}
+      {/* Camera feed — expands into a fixed overlay in fullscreen */}
       <div
-        className="camera-feed-container shadow-sm rounded-xl overflow-hidden cursor-pointer"
-        onClick={isLive ? handleTap : undefined}
-        role={isLive ? "button" : undefined}
-        tabIndex={isLive ? 0 : undefined}
+        ref={zoomContainerRef}
+        className={cn(
+          isFullscreen
+            ? "fixed inset-0 z-[60] bg-black touch-none select-none overscroll-none"
+            : "camera-feed-container shadow-sm rounded-xl overflow-hidden cursor-pointer"
+        )}
+        onClick={!isFullscreen && isLive ? enterFullscreen : undefined}
+        role={!isFullscreen && isLive ? "button" : undefined}
+        tabIndex={!isFullscreen && isLive ? 0 : undefined}
+        {...(isFullscreen
+          ? {
+              ...zoomHandlers,
+              onTouchStart: stopTouch,
+              onTouchMove: stopTouch,
+              onTouchEnd: stopTouch,
+            }
+          : {})}
       >
-        {/* Grace period: last snapshot + small spinner overlay */}
-        {inGracePeriod && (
-          <div className="absolute inset-0 bg-black">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={`/api/go2rtc/frame?src=${encodeURIComponent(cameraSlug)}`}
-              alt=""
-              className="absolute inset-0 w-full h-full object-contain opacity-70"
-            />
-            <div className="absolute bottom-2 right-2">
-              <Loader2 className="h-4 w-4 animate-spin text-white/70" />
+        {/* Zoom target: snapshot + video transform together */}
+        <div
+          ref={zoomTargetRef}
+          className={cn("absolute inset-0", isFullscreen && "will-change-transform")}
+        >
+          {/* Grace period: last snapshot while reconnecting */}
+          {inGracePeriod && (
+            <div className="absolute inset-0 bg-black">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`/api/go2rtc/frame?src=${encodeURIComponent(cameraSlug)}`}
+                alt=""
+                className="absolute inset-0 w-full h-full object-contain opacity-70"
+              />
             </div>
+          )}
+
+          {/* Live video stream */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className={cn(
+              "absolute inset-0 w-full h-full object-contain transition-opacity duration-300",
+              isLive ? "opacity-100" : "opacity-0 pointer-events-none"
+            )}
+          />
+        </div>
+
+        {/* Grace period spinner (kept outside the zoom target) */}
+        {inGracePeriod && (
+          <div className="absolute bottom-2 right-2">
+            <Loader2 className="h-4 w-4 animate-spin text-white/70" />
           </div>
         )}
 
@@ -198,18 +295,6 @@ export const CameraFeed = memo(function CameraFeed({
             <Loader2 className="h-8 w-8 animate-spin text-white/40" />
           </div>
         )}
-
-        {/* Live video stream */}
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className={cn(
-            "absolute inset-0 w-full h-full object-contain transition-opacity duration-300",
-            isLive ? "opacity-100" : "opacity-0 pointer-events-none"
-          )}
-        />
 
         {/* Server-confirmed offline — auto-recovers via health poll */}
         {showFullOffline && (
@@ -223,11 +308,47 @@ export const CameraFeed = memo(function CameraFeed({
         {showClientOffline && (
           <button
             onClick={handleRetry}
+            onPointerDown={stopPointer}
             className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black"
           >
             <VideoOff className="h-8 w-8 text-white/60" />
             <span className="text-xs text-white/60">Tap to retry</span>
           </button>
+        )}
+
+        {/* Fullscreen chrome: name, sound toggle, close */}
+        {isFullscreen && (
+          <div
+            className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between gap-2 px-4 pb-8 bg-gradient-to-b from-black/60 to-transparent"
+            style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
+            onPointerDown={stopPointer}
+          >
+            <span className="text-sm font-semibold text-white/90 truncate">
+              {cameraName}
+            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleMute();
+                }}
+                aria-label={muted ? "Unmute" : "Mute"}
+                className="flex items-center justify-center h-10 w-10 rounded-full bg-black/50 text-white/80 backdrop-blur-sm"
+              >
+                {muted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  exitFullscreen();
+                }}
+                aria-label="Exit fullscreen"
+                className="flex items-center justify-center h-10 w-10 rounded-full bg-black/50 text-white/80 backdrop-blur-sm"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>
