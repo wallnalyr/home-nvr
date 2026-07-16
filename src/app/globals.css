@@ -267,6 +267,15 @@ select {
   overscroll-behavior-y: contain;
 }
 
+/* While a video fullscreen overlay is active, hide the bottom nav.
+   The overlays live inside <main>, whose -webkit-overflow-scrolling
+   creates a stacking context on iOS — the sibling nav (z-10) would
+   otherwise paint above them and steal touches from the bottom
+   controls, no matter the overlay's z-index. */
+body.video-fullscreen .app-bottom-nav {
+  display: none;
+}
+
 /* Scrollbar styling for non-touch devices */
 @media (hover: hover) {
   .ios-scroll::-webkit-scrollbar {

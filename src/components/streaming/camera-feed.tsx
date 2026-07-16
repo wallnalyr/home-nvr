@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Loader2, VideoOff, Volume2, VolumeX, X } from "lucide-react";
 import { useGo2rtcStream } from "@/hooks/use-go2rtc-stream";
 import { usePinchZoom } from "@/hooks/use-pinch-zoom";
+import { useImmersive } from "@/hooks/use-immersive";
 
 // Show last snapshot with small spinner for this long before full offline state
 const GRACE_PERIOD_MS = 15000;
@@ -81,6 +82,7 @@ export const CameraFeed = memo(function CameraFeed({
     targetRef: zoomTargetRef,
     handlers: zoomHandlers,
   } = usePinchZoom(isFullscreen);
+  useImmersive(isFullscreen);
 
   // iOS blocks play() on an unmuted video outside a user gesture. If
   // the stream reconnects mid-fullscreen (stall retry, network blip),

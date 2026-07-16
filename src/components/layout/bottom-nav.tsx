@@ -26,7 +26,7 @@ export function BottomNav() {
 
   return (
     <nav
-      className="flex-shrink-0 bg-card/95 nav-blur border-t border-border relative z-10 overscroll-none"
+      className="app-bottom-nav flex-shrink-0 bg-card/95 nav-blur border-t border-border relative z-10 overscroll-none"
       style={{
         paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))",
         touchAction: "none",
