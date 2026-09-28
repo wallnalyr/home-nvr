@@ -11,7 +11,16 @@ import {
   DEFAULT_ENABLED_OBJECTS,
   DEFAULT_ENABLED_AUDIO,
 } from "@/lib/objects";
+import {
+  parsePolygons,
+  polygonsToNamedMasks,
+  zoneCoordinatesToString,
+} from "@/lib/frigate-masks";
 import { writeFile } from "fs/promises";
+
+// Config schema version emitted below. Stamping it tells Frigate the config
+// is already in native 0.18 format, so its startup migrator leaves it alone.
+const FRIGATE_CONFIG_VERSION = "0.18-0";
 
 /**
  * Extract WebRTC ICE candidates from the app URL.
@@ -32,6 +41,7 @@ function getWebRTCCandidates(): string[] {
 }
 
 interface FrigateConfig {
+  version: string;
   mqtt: { host: string; port: number };
   detectors: Record<string, unknown>;
   model?: { path: string };
@@ -100,6 +110,7 @@ export async function generateFrigateConfig(): Promise<string> {
   }
 
   const config: FrigateConfig = {
+    version: FRIGATE_CONFIG_VERSION,
     mqtt: {
       host: "mqtt",
       port: 1883,
@@ -170,6 +181,19 @@ export async function generateFrigateConfig(): Promise<string> {
     const mainRoles = camera.rtspSubUrl ? ["record"] : ["detect", "record"];
     if (hasAudio) mainRoles.push("audio");
 
+    // Exclusion zones: drawn polygons are emitted BOTH as motion masks
+    // (motion inside is ignored) and as object masks (any tracked object
+    // whose bounding-box bottom-center falls inside is dropped as a false
+    // positive). A motion mask alone does not stop object detection or
+    // review alerts — Frigate only excludes objects via object masks.
+    const exclusionPolygons = parsePolygons(camera.motionMask);
+    if (camera.motionMask && exclusionPolygons.length === 0) {
+      console.warn(
+        `[Config] Ignoring malformed exclusion zones for camera "${camera.slug}"`,
+      );
+    }
+    const hasExclusions = exclusionPolygons.length > 0;
+
     const cameraConfig: Record<string, unknown> = {
       enabled: true,
       ffmpeg: {
@@ -198,7 +222,17 @@ export async function generateFrigateConfig(): Promise<string> {
       },
       objects: {
         track: objects,
+        ...(hasExclusions
+          ? { mask: polygonsToNamedMasks(exclusionPolygons) }
+          : {}),
       },
+      // Every tracked label counts as an alert (Frigate's default is only
+      // person/car; everything else lands in the "detection" noise tier).
+      // The notification dispatcher only pushes alert-severity reviews, so
+      // this keeps all tracked labels notifiable.
+      ...(objects.length > 0
+        ? { review: { alerts: { labels: objects } } }
+        : {}),
       record: {
         enabled: camera.recordEnabled,
         continuous: {
@@ -222,28 +256,8 @@ export async function generateFrigateConfig(): Promise<string> {
       },
       motion: {
         threshold: camera.motionThreshold,
-        ...(camera.motionMask
-          ? (() => {
-              try {
-                const parsed = JSON.parse(camera.motionMask);
-                if (!Array.isArray(parsed) || parsed.length === 0) return {};
-                // Convert normalized [0-1] polygon coordinates to Frigate's
-                // pixel-space format: ["x1,y1,x2,y2,...", ...]
-                const w = camera.detectWidth;
-                const h = camera.detectHeight;
-                const mask = parsed.map((polygon: number[][]) =>
-                  polygon
-                    .map(
-                      ([x, y]: number[]) =>
-                        `${Math.round(x * w)},${Math.round(y * h)}`,
-                    )
-                    .join(","),
-                );
-                return { mask };
-              } catch {
-                return {};
-              }
-            })()
+        ...(hasExclusions
+          ? { mask: polygonsToNamedMasks(exclusionPolygons) }
           : {}),
       },
     };
@@ -264,16 +278,25 @@ export async function generateFrigateConfig(): Promise<string> {
     if (camera.zones.length > 0) {
       const zones: Record<string, unknown> = {};
       for (const zone of camera.zones) {
+        const coordinates = zoneCoordinatesToString(zone.coordinates);
+        if (!coordinates) {
+          console.warn(
+            `[Config] Skipping zone "${zone.name}" on camera "${camera.slug}": malformed coordinates`,
+          );
+          continue;
+        }
         const zoneObjects = zone.objects
           .split(",")
           .map((o) => o.trim())
           .filter((o) => o && globalObjects.has(o));
         zones[zone.name] = {
-          coordinates: zone.coordinates,
+          coordinates,
           objects: zoneObjects,
         };
       }
-      cameraConfig.zones = zones;
+      if (Object.keys(zones).length > 0) {
+        cameraConfig.zones = zones;
+      }
     }
 
     config.cameras[cameraId] = cameraConfig;
@@ -308,16 +331,20 @@ async function runRegenerate(): Promise<void> {
     await saveFrigateConfig(configYaml);
     console.log("[Config] Config saved and restart triggered");
   } catch (err) {
-    console.warn(
-      "[Config] Frigate API push failed:",
-      err instanceof Error ? err.message : err,
-    );
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn("[Config] Frigate API push failed:", message);
     if (!fileWritten) {
       throw new Error(
         "Failed to save Frigate config: file write failed and API unreachable",
       );
     }
-    // File was written; Frigate will pick it up on next container restart
+    // The file was written, but a rejected/failed push means Frigate keeps
+    // running its previous config until its next restart. Surface that
+    // instead of reporting success — callers return it as configWarning.
+    throw new Error(
+      `Frigate did not accept the pushed config (${message}). ` +
+        "The config file was written to disk and will apply on the next Frigate restart.",
+    );
   }
 }
 
