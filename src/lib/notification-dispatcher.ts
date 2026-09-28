@@ -11,6 +11,10 @@ import type { NotificationPayload } from "@/types/notification";
 // Audio cooldown: camera-label -> last notification timestamp
 const audioCooldowns = new Map<string, number>();
 
+// Object review cooldown: camera -> last notification timestamp. Enforces
+// the per-camera Camera.notifyCooldownSec setting.
+const reviewCooldowns = new Map<string, number>();
+
 // Recently-notified review IDs. Frigate should only emit `new` once per review,
 // but guard against MQTT redelivery and listener restart races. Entries auto-expire.
 const recentReviewIds = new Map<string, number>();
@@ -72,10 +76,11 @@ export async function handleFrigateEvent(payload: unknown) {
   // Treat everything else as a frigate/reviews payload
   const review = payload as FrigateReviewPayload;
 
-  // Only fire on the start of a new review. `update` events fire mid-review
-  // when new objects/zones appear; `end` fires when activity stops. We only
-  // want one push per review, so ignore the rest.
-  if (review.type !== "new") return;
+  // Fire when a review first reaches alert severity: either it starts as an
+  // alert (`new`) or it escalates from detection to alert mid-review
+  // (`update`). `end` only marks activity stopping. The review-ID dedup
+  // below guarantees at most one push per review either way.
+  if (review.type !== "new" && review.type !== "update") return;
 
   const { after } = review;
   if (!after || !after.id || !after.camera || !after.data) return;
@@ -86,6 +91,25 @@ export async function handleFrigateEvent(payload: unknown) {
     severity,
     data: { objects = [], detections = [] },
   } = after;
+
+  // Only alert-severity reviews notify. Config generation promotes every
+  // tracked label to an alert label (review.alerts.labels), so this drops
+  // only Frigate's sub-alert noise tier, never labels the user tracks.
+  if (severity !== "alert") {
+    if (review.type === "new") {
+      console.log(
+        `[Notification] Skipped: review ${reviewId} severity "${severity}"`,
+      );
+    }
+    return;
+  }
+
+  // For updates, only a genuine detection → alert escalation may notify.
+  // Later updates of an already-alert review (new objects/zones appearing)
+  // must not re-notify once the dedup TTL expires.
+  if (review.type === "update" && review.before?.severity === "alert") {
+    return;
+  }
 
   if (alreadyNotifiedReview(reviewId)) {
     console.log(
@@ -115,6 +139,20 @@ export async function handleFrigateEvent(payload: unknown) {
       `[Notification] Skipped: camera "${cameraName}" not found, disabled, or notifications off`,
     );
     return;
+  }
+
+  // Per-camera cooldown (notifyCooldownSec; 0 disables). Reviews skipped
+  // here stay marked in the dedup map — a cooldown is a rate limit, not a
+  // deferral.
+  const cooldownMs = camera.notifyCooldownSec * 1000;
+  if (cooldownMs > 0) {
+    const sinceMs = Date.now() - (reviewCooldowns.get(cameraName) ?? 0);
+    if (sinceMs < cooldownMs) {
+      console.log(
+        `[Notification] Skipped: cooldown active for ${cameraName} (${Math.ceil((cooldownMs - sinceMs) / 1000)}s left)`,
+      );
+      return;
+    }
   }
 
   // Apply per-camera, global, and notification-filter object lists to the
@@ -249,6 +287,8 @@ export async function handleFrigateEvent(payload: unknown) {
       objectType: allowedLabels.join(","),
     },
   };
+
+  reviewCooldowns.set(cameraName, Date.now());
 
   let sentCount = 0;
 
