@@ -43,6 +43,37 @@ function parsePoint(point: unknown): NormalizedPoint | null {
   return [point[0], point[1]];
 }
 
+// Bounds enforced at the API layer. Far above anything the editor can
+// produce, but they keep a hostile payload from ballooning the Frigate
+// config (each polygon is emitted twice and object masks are merged into
+// every tracked label's filter at runtime).
+export const MAX_MASK_JSON_LENGTH = 262144;
+export const MAX_POLYGONS = 64;
+export const MAX_POLYGON_POINTS = 256;
+
+/**
+ * Strict validation for API input: parseable JSON, bounded polygon/point
+ * counts, every polygon well-formed. Stricter than parsePolygons, which
+ * leniently drops bad polygons when emitting config from stored data.
+ */
+export function isValidMaskPayload(value: string): boolean {
+  if (value.length > MAX_MASK_JSON_LENGTH) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(parsed) || parsed.length > MAX_POLYGONS) return false;
+  return parsed.every(
+    (poly) =>
+      Array.isArray(poly) &&
+      poly.length >= 3 &&
+      poly.length <= MAX_POLYGON_POINTS &&
+      poly.every((point) => parsePoint(point) !== null),
+  );
+}
+
 /** Parse the stored polygon JSON, dropping malformed polygons. */
 export function parsePolygons(value: string | null): NormalizedPolygon[] {
   if (!value) return [];

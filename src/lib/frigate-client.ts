@@ -93,7 +93,13 @@ export async function saveFrigateConfig(configYaml: string) {
     body: configYaml,
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
+    const raw = await res.text().catch(() => "");
+    // Frigate's validation errors can echo config context, including camera
+    // RTSP URLs with credentials — redact and bound the body before it
+    // travels into thrown errors and API responses (configWarning).
+    const body = raw
+      .replace(/rtsps?:\/\/[^/\s@"']+@/gi, "rtsp://***@")
+      .slice(0, 500);
     throw new Error(`Failed to save Frigate config: ${res.status} ${body}`);
   }
   return res.json();

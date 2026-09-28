@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  isValidMaskPayload,
+  MAX_POLYGON_POINTS,
+  MAX_POLYGONS,
   parsePolygons,
   polygonToCoordinates,
   polygonsToNamedMasks,
@@ -89,6 +92,32 @@ describe("polygonsToNamedMasks", () => {
       },
     });
     expect(polygonsToNamedMasks([])).toEqual({});
+  });
+});
+
+describe("isValidMaskPayload", () => {
+  it("accepts what the editor produces", () => {
+    expect(isValidMaskPayload(JSON.stringify([SQUARE, SQUARE]))).toBe(true);
+    expect(isValidMaskPayload("[]")).toBe(true);
+  });
+
+  it("rejects malformed payloads", () => {
+    expect(isValidMaskPayload("not json")).toBe(false);
+    expect(isValidMaskPayload('{"a":1}')).toBe(false);
+    expect(isValidMaskPayload("[[[0.1,0.1],[0.2,0.2]]]")).toBe(false);
+    expect(isValidMaskPayload('[[[0.1,"x"],[0.2,0.2],[0.3,0.3]]]')).toBe(false);
+  });
+
+  it("rejects payloads over the polygon and point bounds", () => {
+    const tooManyPolygons = Array(MAX_POLYGONS + 1).fill(SQUARE);
+    expect(isValidMaskPayload(JSON.stringify(tooManyPolygons))).toBe(false);
+    const tooManyPoints = [
+      Array.from({ length: MAX_POLYGON_POINTS + 1 }, (_, i) => [
+        (i % 100) / 100,
+        0.5,
+      ]),
+    ];
+    expect(isValidMaskPayload(JSON.stringify(tooManyPoints))).toBe(false);
   });
 });
 

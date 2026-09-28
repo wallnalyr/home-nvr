@@ -107,8 +107,38 @@ describe("handleFrigateEvent severity gating", () => {
     expect(mocks.logCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("skips detection-severity reviews", async () => {
+  it("still notifies detection-severity new reviews for tracked labels (pre-promotion Frigate config)", async () => {
+    // Until the regenerated config (which promotes tracked labels to alert
+    // labels) reaches Frigate, tracked labels like cat/dog arrive with
+    // detection severity — they must keep notifying like they did on main.
     await dispatcher.handleFrigateEvent(makeReview({ severity: "detection" }));
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips reviews containing only untracked labels", async () => {
+    const review = makeReview();
+    review.after.data.objects = ["bird"];
+    await dispatcher.handleFrigateEvent(review);
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("matches sub-labeled objects to their base tracked label", async () => {
+    const review = makeReview();
+    review.after.data.objects = ["person-verified"];
+    await dispatcher.handleFrigateEvent(review);
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(mocks.sendNotification.mock.calls[0][1]);
+    expect(payload.title).toBe("Person on Front");
+  });
+
+  it("ignores updates that stay at detection severity", async () => {
+    await dispatcher.handleFrigateEvent(
+      makeReview({
+        type: "update",
+        severity: "detection",
+        beforeSeverity: "detection",
+      }),
+    );
     expect(mocks.sendNotification).not.toHaveBeenCalled();
   });
 
@@ -162,6 +192,15 @@ describe("handleFrigateEvent per-camera cooldown", () => {
     await dispatcher.handleFrigateEvent(makeReview({ id: "rev1", camera: "front" }));
     await dispatcher.handleFrigateEvent(makeReview({ id: "rev2", camera: "back" }));
     expect(mocks.sendNotification).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not consume the cooldown when every send fails", async () => {
+    mocks.sendNotification.mockRejectedValue(new Error("ECONNRESET"));
+    await dispatcher.handleFrigateEvent(makeReview({ id: "rev1" }));
+    mocks.sendNotification.mockReset().mockResolvedValue({});
+    vi.advanceTimersByTime(5_000);
+    await dispatcher.handleFrigateEvent(makeReview({ id: "rev2" }));
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
   });
 
   it("disables the throttle when notifyCooldownSec is 0", async () => {

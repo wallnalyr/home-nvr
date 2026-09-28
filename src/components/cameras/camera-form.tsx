@@ -422,7 +422,9 @@ export function CameraForm({
             <MotionMaskEditor
               cameraSlug={camera.slug}
               value={form.motionMask ?? null}
-              onChange={(mask) => update("motionMask", mask ?? undefined, true)}
+              // null must reach the PUT body — `?? undefined` here made
+              // JSON.stringify drop the key, so clearing zones never saved
+              onChange={(mask) => update("motionMask", mask, true)}
               detectWidth={form.detectWidth ?? 1280}
               detectHeight={form.detectHeight ?? 720}
             />

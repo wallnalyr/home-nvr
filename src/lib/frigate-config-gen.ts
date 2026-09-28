@@ -227,9 +227,10 @@ export async function generateFrigateConfig(): Promise<string> {
           : {}),
       },
       // Every tracked label counts as an alert (Frigate's default is only
-      // person/car; everything else lands in the "detection" noise tier).
-      // The notification dispatcher only pushes alert-severity reviews, so
-      // this keeps all tracked labels notifiable.
+      // person/car; everything else lands in the "detection" tier). This
+      // aligns Frigate's own review UI and alert recording retention with
+      // what the user tracks; the dispatcher filters by tracked labels
+      // either way.
       ...(objects.length > 0
         ? { review: { alerts: { labels: objects } } }
         : {}),

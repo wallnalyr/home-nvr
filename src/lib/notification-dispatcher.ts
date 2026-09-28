@@ -76,10 +76,14 @@ export async function handleFrigateEvent(payload: unknown) {
   // Treat everything else as a frigate/reviews payload
   const review = payload as FrigateReviewPayload;
 
-  // Fire when a review first reaches alert severity: either it starts as an
-  // alert (`new`) or it escalates from detection to alert mid-review
-  // (`update`). `end` only marks activity stopping. The review-ID dedup
-  // below guarantees at most one push per review either way.
+  // Fire on the start of a new review, or on an update that escalates a
+  // review from detection to alert severity. `end` only marks activity
+  // stopping. `new` messages are deliberately NOT gated on severity: Frigate
+  // may still be running a config from before this app promoted tracked
+  // labels to alert labels (config pushes can lag until a Frigate restart),
+  // and under that config tracked labels like cat/dog arrive as
+  // `detection`. The allowed-label filter below already drops anything the
+  // user doesn't track.
   if (review.type !== "new" && review.type !== "update") return;
 
   const { after } = review;
@@ -92,23 +96,15 @@ export async function handleFrigateEvent(payload: unknown) {
     data: { objects = [], detections = [] },
   } = after;
 
-  // Only alert-severity reviews notify. Config generation promotes every
-  // tracked label to an alert label (review.alerts.labels), so this drops
-  // only Frigate's sub-alert noise tier, never labels the user tracks.
-  if (severity !== "alert") {
-    if (review.type === "new") {
-      console.log(
-        `[Notification] Skipped: review ${reviewId} severity "${severity}"`,
-      );
-    }
-    return;
-  }
-
-  // For updates, only a genuine detection → alert escalation may notify.
-  // Later updates of an already-alert review (new objects/zones appearing)
-  // must not re-notify once the dedup TTL expires.
-  if (review.type === "update" && review.before?.severity === "alert") {
-    return;
+  if (review.type === "update") {
+    // Updates fire for many mid-review changes (new objects, zones). Only a
+    // detection → alert escalation may notify — it covers reviews whose
+    // `new` message was missed; an already-notified review is deduped
+    // below, and gating out already-alert updates prevents re-notification
+    // once the dedup TTL expires.
+    const escalated =
+      severity === "alert" && review.before?.severity !== "alert";
+    if (!escalated) return;
   }
 
   if (alreadyNotifiedReview(reviewId)) {
@@ -177,7 +173,14 @@ export async function handleFrigateEvent(payload: unknown) {
     ? JSON.parse(notifObjRow.value)
     : null;
 
-  const allowedLabels = objects.filter(
+  // Frigate rewrites sub-labeled objects in review payloads (a recognized
+  // person arrives as "person-verified") — strip the suffix so they still
+  // match the tracked-label lists.
+  const reviewLabels = [
+    ...new Set(objects.map((label) => label.replace(/-verified$/, ""))),
+  ];
+
+  const allowedLabels = reviewLabels.filter(
     (label) =>
       globalObjects.includes(label) &&
       cameraObjects.includes(label) &&
@@ -288,8 +291,6 @@ export async function handleFrigateEvent(payload: unknown) {
     },
   };
 
-  reviewCooldowns.set(cameraName, Date.now());
-
   let sentCount = 0;
 
   for (const sub of eligibleSubscriptions) {
@@ -317,6 +318,13 @@ export async function handleFrigateEvent(payload: unknown) {
         );
       }
     }
+  }
+
+  // Start the cooldown window only when at least one push actually went
+  // out — a transient push-service outage must not rate-limit the camera
+  // on the basis of notifications nobody received.
+  if (sentCount > 0) {
+    reviewCooldowns.set(cameraName, Date.now());
   }
 
   console.log(
