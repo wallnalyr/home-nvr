@@ -1,10 +1,11 @@
+import os from "os";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
   reactStrictMode: false,
   experimental: {
-    cpus: Math.min(4, require("os").cpus().length),
+    cpus: Math.min(4, os.cpus().length),
   },
   serverExternalPackages: ["web-push", "mqtt"],
   async headers() {
