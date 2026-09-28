@@ -411,12 +411,13 @@ export function CameraForm({
           )}
         </div>
 
-        {/* Motion Mask — only available when editing (needs slug for snapshot) */}
+        {/* Exclusion zones — only available when editing (needs slug for snapshot) */}
         {camera && (
           <div className="space-y-2">
-            <Label>Motion Mask</Label>
+            <Label>Exclusion Zones</Label>
             <p className="text-xs text-muted-foreground">
-              Draw areas to ignore for motion detection
+              Draw zones where motion and objects are ignored — nothing inside
+              them triggers alerts
             </p>
             <MotionMaskEditor
               cameraSlug={camera.slug}

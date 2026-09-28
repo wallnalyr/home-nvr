@@ -12,6 +12,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Pencil, Trash2, Undo2, X } from "lucide-react";
 import Image from "next/image";
+import {
+  parsePolygons,
+  type NormalizedPoint,
+  type NormalizedPolygon,
+} from "@/lib/frigate-masks";
 
 interface MotionMaskEditorProps {
   cameraSlug: string;
@@ -21,19 +26,8 @@ interface MotionMaskEditorProps {
   detectHeight: number;
 }
 
-type Point = [number, number]; // normalized [0-1]
-type Polygon = Point[];
-
-function parsePolygons(value: string | null): Polygon[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    if (Array.isArray(parsed) && parsed.every(Array.isArray)) return parsed;
-  } catch {
-    // invalid JSON
-  }
-  return [];
-}
+type Point = NormalizedPoint; // normalized [0-1]
+type Polygon = NormalizedPolygon;
 
 function serializePolygons(polygons: Polygon[]): string | null {
   if (polygons.length === 0) return null;
@@ -142,17 +136,17 @@ export function MotionMaskEditor({
           <Button type="button" variant="secondary" className="h-9 rounded-lg">
             <Pencil className="mr-2 h-3.5 w-3.5" />
             {polygonCount > 0
-              ? `Edit Mask (${polygonCount} zone${polygonCount !== 1 ? "s" : ""})`
-              : "Draw Mask"}
+              ? `Edit Zones (${polygonCount})`
+              : "Draw Zones"}
           </Button>
         }
       />
       <DialogContent className="max-w-2xl" showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>Motion Mask</DialogTitle>
+          <DialogTitle>Exclusion Zones</DialogTitle>
           <p className="text-xs text-muted-foreground">
-            Tap to place points. Areas inside masks are ignored for motion
-            detection.
+            Tap to place points. Motion inside these zones is ignored and
+            objects detected inside them never trigger alerts.
           </p>
         </DialogHeader>
 
@@ -167,7 +161,12 @@ export function MotionMaskEditor({
               src={snapshotUrl}
               alt="Camera snapshot"
               fill
-              className="object-contain"
+              // object-fill (not contain): Frigate stretches frames to the
+              // detect resolution, and the overlay spans this container with
+              // the detect aspect ratio — stretching the snapshot the same
+              // way keeps drawn zones aligned with the video content even
+              // when the camera's native aspect ratio differs.
+              className="object-fill"
               draggable={false}
               unoptimized
             />
