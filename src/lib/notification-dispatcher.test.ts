@@ -41,6 +41,17 @@ function makeCamera(overrides: Record<string, unknown> = {}) {
     notifyEnabled: true,
     notifyCooldownSec: 30,
     objectsTrack: "person,car",
+    audioDetect: "fire_alarm,yell,bark,glass",
+    ...overrides,
+  };
+}
+
+function makeAudioEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    _audio: true,
+    camera: "front",
+    label: "yell",
+    state: "ON",
     ...overrides,
   };
 }
@@ -247,6 +258,84 @@ describe("handleFrigateEvent per-camera cooldown", () => {
     mocks.cameraFindFirst.mockResolvedValue(makeCamera({ notifyCooldownSec: 0 }));
     await dispatcher.handleFrigateEvent(makeReview({ id: "rev1" }));
     await dispatcher.handleFrigateEvent(makeReview({ id: "rev2" }));
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("handleAudioEvent", () => {
+  it("sends an audio push for a valid tracked label", async () => {
+    await dispatcher.handleFrigateEvent(makeAudioEvent());
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(mocks.sendNotification.mock.calls[0][1]);
+    expect(payload.title).toBe("Scream / Yell on Front");
+  });
+
+  it("respects a per-device preference disabling the label", async () => {
+    mocks.subscriptionFindMany.mockResolvedValue([
+      {
+        id: "sub1",
+        endpoint: "https://push/1",
+        p256dh: "k",
+        auth: "a",
+        preferences: [{ camera: "front", objectType: "yell", enabled: false }],
+      },
+      {
+        id: "sub2",
+        endpoint: "https://push/2",
+        p256dh: "k",
+        auth: "a",
+        preferences: [],
+      },
+    ]);
+    await dispatcher.handleFrigateEvent(makeAudioEvent());
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.sendNotification.mock.calls[0][0].endpoint).toBe(
+      "https://push/2",
+    );
+  });
+
+  it("respects a global mute preference", async () => {
+    mocks.subscriptionFindMany.mockResolvedValue([
+      {
+        id: "sub1",
+        endpoint: "https://push/1",
+        p256dh: "k",
+        auth: "a",
+        preferences: [{ camera: "*", objectType: "*", enabled: false }],
+      },
+    ]);
+    await dispatcher.handleFrigateEvent(makeAudioEvent());
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("drops unknown labels (like the removed 'scream') before any DB work", async () => {
+    await dispatcher.handleFrigateEvent(makeAudioEvent({ label: "scream" }));
+    expect(mocks.cameraFindFirst).not.toHaveBeenCalled();
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("silently ignores activity subtopics and numeric levels", async () => {
+    await dispatcher.handleFrigateEvent(makeAudioEvent({ label: "all" }));
+    await dispatcher.handleFrigateEvent(makeAudioEvent({ label: "state" }));
+    await dispatcher.handleFrigateEvent(
+      makeAudioEvent({ label: "dBFS", state: "-32.5" }),
+    );
+    expect(mocks.cameraFindFirst).not.toHaveBeenCalled();
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("skips labels not in the camera's audioDetect list", async () => {
+    await dispatcher.handleFrigateEvent(makeAudioEvent({ label: "doorbell" }));
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("enforces the per camera+label cooldown", async () => {
+    await dispatcher.handleFrigateEvent(makeAudioEvent());
+    vi.advanceTimersByTime(30_000);
+    await dispatcher.handleFrigateEvent(makeAudioEvent());
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(31_000);
+    await dispatcher.handleFrigateEvent(makeAudioEvent());
     expect(mocks.sendNotification).toHaveBeenCalledTimes(2);
   });
 });
