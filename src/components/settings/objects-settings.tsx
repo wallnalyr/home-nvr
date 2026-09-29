@@ -98,6 +98,8 @@ export function ObjectsSettings() {
       } else {
         toast.error("Failed to save audio settings — refresh and try again");
       }
+    } catch {
+      toast.error("Failed to save audio settings — refresh and try again");
     } finally {
       setSaving(false);
     }
@@ -117,6 +119,8 @@ export function ObjectsSettings() {
       } else {
         toast.error("Failed to save object settings — refresh and try again");
       }
+    } catch {
+      toast.error("Failed to save object settings — refresh and try again");
     } finally {
       setSaving(false);
     }

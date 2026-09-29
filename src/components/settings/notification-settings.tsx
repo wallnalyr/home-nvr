@@ -95,6 +95,8 @@ export function NotificationSettings() {
       } else {
         toast.error("Failed to save notification settings — refresh and try again");
       }
+    } catch {
+      toast.error("Failed to save notification settings — refresh and try again");
     } finally {
       setSaving(false);
     }
@@ -145,6 +147,8 @@ export function NotificationSettings() {
       } else {
         toast.error("Failed to save notification settings — refresh and try again");
       }
+    } catch {
+      toast.error("Failed to save notification settings — refresh and try again");
     } finally {
       setSaving(false);
     }
