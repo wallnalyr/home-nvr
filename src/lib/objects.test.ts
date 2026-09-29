@@ -5,6 +5,7 @@ import {
   AUDIO_LABELS,
   DEFAULT_ENABLED_AUDIO,
   LEGACY_AUDIO_LABEL_MAP,
+  normalizeAudioLabels,
 } from "@/lib/objects";
 
 // Verbatim copy of Frigate v0.18.0's audio-labelmap.txt (one Frigate label
@@ -42,5 +43,27 @@ describe("AUDIO_LABELS Frigate vocabulary conformance", () => {
       expect(FRIGATE_AUDIO_LABELS.has(legacy), legacy).toBe(false);
       expect(FRIGATE_AUDIO_LABELS.has(current), current).toBe(true);
     }
+  });
+});
+
+describe("normalizeAudioLabels", () => {
+  it("converts legacy ids and preserves order", () => {
+    expect(normalizeAudioLabels(["fire_alarm", "scream", "bark"])).toEqual([
+      "fire_alarm",
+      "yell",
+      "bark",
+    ]);
+    expect(normalizeAudioLabels(["car_horn"])).toEqual(["honk"]);
+  });
+
+  it("dedupes non-adjacent duplicates produced by the rename", () => {
+    expect(
+      normalizeAudioLabels(["scream", "bark", "glass", "yell"]),
+    ).toEqual(["yell", "bark", "glass"]);
+  });
+
+  it("passes through current ids unchanged", () => {
+    const current = ["fire_alarm", "yell", "bark", "glass"];
+    expect(normalizeAudioLabels(current)).toEqual(current);
   });
 });

@@ -105,13 +105,20 @@ export const AUDIO_CATEGORIES = [
 
 export const DEFAULT_ENABLED_AUDIO = ["fire_alarm", "smoke_detector", "yell", "bark", "glass"];
 
-// Historical label ids that never existed in Frigate's audio labelmap —
-// stored values are converted by the rename_audio_labels DB migration; this
-// map is exported for tests documenting the rename.
+// Historical label ids that never existed in Frigate's audio labelmap.
+// Stored values are converted by the rename_audio_labels DB migration, but
+// stale clients (open tabs, cached PWA bundles) can still send the old ids
+// after the deploy — every write path accepts and converts them via
+// normalizeAudioLabels instead of rejecting or silently dropping.
 export const LEGACY_AUDIO_LABEL_MAP: Record<string, string> = {
   scream: "yell",
   car_horn: "honk",
 };
+
+/** Convert legacy audio label ids and dedupe, preserving first-seen order. */
+export function normalizeAudioLabels(ids: string[]): string[] {
+  return [...new Set(ids.map((id) => LEGACY_AUDIO_LABEL_MAP[id] ?? id))];
+}
 
 export function getAudioLabelById(id: string): AudioLabelDef | undefined {
   return AUDIO_LABELS.find((a) => a.id === id);

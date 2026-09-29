@@ -317,6 +317,7 @@ describe("handleAudioEvent", () => {
   it("silently ignores activity subtopics and numeric levels", async () => {
     await dispatcher.handleFrigateEvent(makeAudioEvent({ label: "all" }));
     await dispatcher.handleFrigateEvent(makeAudioEvent({ label: "state" }));
+    await dispatcher.handleFrigateEvent(makeAudioEvent({ label: "set" }));
     await dispatcher.handleFrigateEvent(
       makeAudioEvent({ label: "dBFS", state: "-32.5" }),
     );

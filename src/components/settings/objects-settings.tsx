@@ -12,6 +12,7 @@ import {
 } from "@/lib/objects";
 import type { ObjectDef, AudioLabelDef } from "@/lib/objects";
 import { Loader2, Sparkles, Volume2 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const CATEGORIES = [
@@ -94,6 +95,8 @@ export function ObjectsSettings() {
       if (res.ok) {
         mutateAudio();
         setAudioDirty(false);
+      } else {
+        toast.error("Failed to save audio settings — refresh and try again");
       }
     } finally {
       setSaving(false);
@@ -111,6 +114,8 @@ export function ObjectsSettings() {
       if (res.ok) {
         mutate();
         setDirty(false);
+      } else {
+        toast.error("Failed to save object settings — refresh and try again");
       }
     } finally {
       setSaving(false);

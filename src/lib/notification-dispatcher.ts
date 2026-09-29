@@ -422,8 +422,9 @@ function filterEligibleSubscriptions<
 const AUDIO_COOLDOWN_MS = 60000; // 1 minute between audio notifications per camera+label
 
 // Frigate publishes activity subtopics under <camera>/audio/ that are not
-// sound labels; they are expected traffic, not vocabulary mismatches.
-const NON_LABEL_AUDIO_TOPICS = new Set(["all", "state", "dBFS", "rms"]);
+// sound labels ("set" is the audio-toggle command topic other MQTT clients
+// publish to); they are expected traffic, not vocabulary mismatches.
+const NON_LABEL_AUDIO_TOPICS = new Set(["all", "state", "set", "dBFS", "rms"]);
 
 async function handleAudioEvent(payload: AudioEventPayload) {
   const { camera: cameraName, label, state } = payload;
@@ -557,7 +558,11 @@ async function handleAudioEvent(payload: AudioEventPayload) {
     } catch (error: unknown) {
       const statusCode = (error as { statusCode?: number }).statusCode;
       if (statusCode === 410 || statusCode === 404) {
-        await prisma.pushSubscription.delete({ where: { id: sub.id } });
+        // Tolerate a concurrent handler having already removed the row —
+        // a throw here would abort sends to the remaining subscriptions
+        await prisma.pushSubscription
+          .delete({ where: { id: sub.id } })
+          .catch(() => {});
       }
     }
   }

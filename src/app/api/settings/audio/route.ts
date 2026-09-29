@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { AUDIO_LABELS, DEFAULT_ENABLED_AUDIO } from "@/lib/objects";
+import {
+  AUDIO_LABELS,
+  DEFAULT_ENABLED_AUDIO,
+  normalizeAudioLabels,
+} from "@/lib/objects";
 import { z } from "zod/v4";
 
 const SETTINGS_KEY = "enabled_audio";
@@ -20,6 +24,9 @@ export async function GET() {
 const updateSchema = z.object({
   enabledAudio: z
     .array(z.string())
+    // Stale clients may still send legacy ids (scream/car_horn) —
+    // accept and convert rather than 400ing their whole save
+    .transform(normalizeAudioLabels)
     .refine(
       (ids) => ids.every((id) => AUDIO_LABELS.some((a) => a.id === id)),
       "Unknown audio label"
