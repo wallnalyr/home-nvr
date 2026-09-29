@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Pencil, Trash2, Undo2, X } from "lucide-react";
 import Image from "next/image";
 import {
+  MAX_POLYGON_POINTS,
+  MAX_POLYGONS,
   parsePolygons,
   type NormalizedPoint,
   type NormalizedPolygon,
@@ -92,10 +94,16 @@ export function MotionMaskEditor({
         return;
       }
       setSelectedPolygon(null);
+      // Stay within the bounds the API enforces (isValidMaskPayload) so a
+      // drawing can never be rejected at save time
+      if (polygons.length >= MAX_POLYGONS && currentPoints.length === 0) {
+        return;
+      }
+      if (currentPoints.length >= MAX_POLYGON_POINTS) return;
       const point = getRelativeCoords(e);
       setCurrentPoints((prev) => [...prev, point]);
     },
-    [getRelativeCoords],
+    [getRelativeCoords, polygons.length, currentPoints.length],
   );
 
   const finishPolygon = useCallback(() => {

@@ -11,6 +11,7 @@ import { useEnabledObjects } from "@/hooks/use-enabled-objects";
 import { useEnabledAudio } from "@/hooks/use-enabled-audio";
 import { ALL_OBJECTS, AUDIO_LABELS } from "@/lib/objects";
 import { cn } from "@/lib/utils";
+import { isValidMaskPayload } from "@/lib/frigate-masks";
 import { MotionMaskEditor } from "@/components/cameras/motion-mask-editor";
 import type { Camera, CameraFormData } from "@/types/camera";
 
@@ -64,7 +65,13 @@ export function CameraForm({
     notifyEnabled: camera?.notifyEnabled ?? true,
     notifyCooldownSec: camera?.notifyCooldownSec ?? 30,
     motionThreshold: camera?.motionThreshold ?? 30,
-    motionMask: camera?.motionMask ?? undefined,
+    // Drop stored masks that predate API validation and no longer pass it —
+    // otherwise every auto-save of this camera would 400 on the stale value.
+    // The user can redraw; config generation ignores invalid rows anyway.
+    motionMask:
+      camera?.motionMask && isValidMaskPayload(camera.motionMask)
+        ? camera.motionMask
+        : undefined,
   });
 
   const fetchDetectCheck = useCallback(() => {

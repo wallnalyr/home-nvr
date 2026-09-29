@@ -47,7 +47,11 @@ const createCameraSchema = z.object({
   motionMask: z
     .string()
     .max(MAX_MASK_JSON_LENGTH)
-    .refine(isValidMaskPayload, "Invalid exclusion zone data")
+    .transform((v) => (v === "" ? null : v))
+    .refine(
+      (v) => v === null || isValidMaskPayload(v),
+      "Invalid exclusion zone data",
+    )
     .nullable()
     .optional(),
   sortOrder: z.number().int().min(0).default(0),

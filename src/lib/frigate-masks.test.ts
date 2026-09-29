@@ -34,6 +34,21 @@ describe("parsePolygons", () => {
     expect(parsePolygons(stored)).toEqual([SQUARE]);
   });
 
+  it("caps polygon and point counts from legacy oversized rows", () => {
+    const oversized = JSON.stringify([
+      ...Array(MAX_POLYGONS + 10).fill(SQUARE),
+    ]);
+    expect(parsePolygons(oversized)).toHaveLength(MAX_POLYGONS);
+    const longPolygon = [
+      Array.from({ length: MAX_POLYGON_POINTS + 1 }, (_, i) => [
+        (i % 100) / 100,
+        0.5,
+      ]),
+      SQUARE,
+    ];
+    expect(parsePolygons(JSON.stringify(longPolygon))).toEqual([SQUARE]);
+  });
+
   it("drops polygons containing malformed points", () => {
     const stored = JSON.stringify([
       [[0.1, 0.1], ["x", 0.2], [0.3, 0.3]],

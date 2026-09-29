@@ -43,11 +43,13 @@ function parsePoint(point: unknown): NormalizedPoint | null {
   return [point[0], point[1]];
 }
 
-// Bounds enforced at the API layer. Far above anything the editor can
-// produce, but they keep a hostile payload from ballooning the Frigate
-// config (each polygon is emitted twice and object masks are merged into
-// every tracked label's filter at runtime).
-export const MAX_MASK_JSON_LENGTH = 262144;
+// Bounds enforced at the API layer and in the editor. Far above anything a
+// real drawing needs, but they keep a hostile payload from ballooning the
+// Frigate config (each polygon is emitted twice and object masks are merged
+// into every tracked label's filter at runtime). The JSON length bound has
+// headroom above the worst case the polygon/point caps allow, so the
+// structural caps are always the binding constraint.
+export const MAX_MASK_JSON_LENGTH = 524288;
 export const MAX_POLYGONS = 64;
 export const MAX_POLYGON_POINTS = 256;
 
@@ -85,8 +87,16 @@ export function parsePolygons(value: string | null): NormalizedPolygon[] {
   }
   if (!Array.isArray(parsed)) return [];
   const polygons: NormalizedPolygon[] = [];
-  for (const poly of parsed) {
-    if (!Array.isArray(poly) || poly.length < 3) continue;
+  // Enforce the same bounds here so legacy rows stored before the API
+  // validated them can't balloon the generated config.
+  for (const poly of parsed.slice(0, MAX_POLYGONS)) {
+    if (
+      !Array.isArray(poly) ||
+      poly.length < 3 ||
+      poly.length > MAX_POLYGON_POINTS
+    ) {
+      continue;
+    }
     const points = poly.map(parsePoint);
     if (points.every((p): p is NormalizedPoint => p !== null)) {
       polygons.push(points);

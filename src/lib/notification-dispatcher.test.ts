@@ -149,6 +149,24 @@ describe("handleFrigateEvent severity gating", () => {
     expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
   });
 
+  it("lets an escalation retry a review whose new message was filtered", async () => {
+    // `new` arrives with only an untracked label — filtered, but the review
+    // must not be permanently blackholed: when a person joins and Frigate
+    // escalates it to alert, the notification must go out.
+    const first = makeReview({ severity: "detection" });
+    first.after.data.objects = ["bird"];
+    await dispatcher.handleFrigateEvent(first);
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
+
+    const escalation = makeReview({
+      type: "update",
+      beforeSeverity: "detection",
+    });
+    escalation.after.data.objects = ["bird", "person"];
+    await dispatcher.handleFrigateEvent(escalation);
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores updates of reviews that were already alerts", async () => {
     await dispatcher.handleFrigateEvent(
       makeReview({ type: "update", beforeSeverity: "alert" }),

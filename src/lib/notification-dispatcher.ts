@@ -89,19 +89,14 @@ export async function handleFrigateEvent(payload: unknown) {
   const { after } = review;
   if (!after || !after.id || !after.camera || !after.data) return;
 
-  const {
-    id: reviewId,
-    camera: cameraName,
-    severity,
-    data: { objects = [], detections = [] },
-  } = after;
+  const { id: reviewId, severity } = after;
 
   if (review.type === "update") {
     // Updates fire for many mid-review changes (new objects, zones). Only a
-    // detection → alert escalation may notify — it covers reviews whose
-    // `new` message was missed; an already-notified review is deduped
-    // below, and gating out already-alert updates prevents re-notification
-    // once the dedup TTL expires.
+    // detection → alert escalation may notify; anything already notified is
+    // deduped below. One accepted gap: a review notified at detection
+    // severity that escalates after the dedup TTL expires re-notifies —
+    // the escalation carries genuinely new information.
     const escalated =
       severity === "alert" && review.before?.severity !== "alert";
     if (!escalated) return;
@@ -117,13 +112,39 @@ export async function handleFrigateEvent(payload: unknown) {
   // arrives while we're inside DB queries can't slip past the dedup check.
   rememberReviewId(reviewId);
 
+  let sentCount = 0;
+  try {
+    sentCount = await sendReviewPushes(after);
+  } finally {
+    // A review nobody was actually notified about must stay retryable — a
+    // later detection → alert escalation, or a redelivery after a transient
+    // failure, should get another chance. Keep the dedup mark only when a
+    // push went out.
+    if (sentCount === 0) {
+      recentReviewIds.delete(reviewId);
+    }
+  }
+}
+
+/**
+ * Runs the filter cascade and sends the pushes for one review segment.
+ * Returns the number of successful sends (0 = nobody was notified).
+ */
+async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
+  const {
+    id: reviewId,
+    camera: cameraName,
+    severity,
+    data: { objects = [], detections = [] },
+  } = after;
+
   console.log(
     `[Notification] New review: ${severity} on ${cameraName} (${reviewId}) objects=[${objects.join(",")}]`,
   );
 
   if (objects.length === 0) {
     console.log(`[Notification] Skipped: review ${reviewId} has no objects`);
-    return;
+    return 0;
   }
 
   // Look up camera in DB by slug (Frigate uses slug as camera identifier)
@@ -134,22 +155,35 @@ export async function handleFrigateEvent(payload: unknown) {
     console.log(
       `[Notification] Skipped: camera "${cameraName}" not found, disabled, or notifications off`,
     );
-    return;
+    return 0;
   }
 
-  // Per-camera cooldown (notifyCooldownSec; 0 disables). Reviews skipped
-  // here stay marked in the dedup map — a cooldown is a rate limit, not a
-  // deferral.
+  // Per-camera cooldown (notifyCooldownSec; 0 disables)
   const cooldownMs = camera.notifyCooldownSec * 1000;
+  let cooldownReservedAt: number | null = null;
   if (cooldownMs > 0) {
     const sinceMs = Date.now() - (reviewCooldowns.get(cameraName) ?? 0);
     if (sinceMs < cooldownMs) {
       console.log(
         `[Notification] Skipped: cooldown active for ${cameraName} (${Math.ceil((cooldownMs - sinceMs) / 1000)}s left)`,
       );
-      return;
+      return 0;
     }
+    // Reserve the window before the awaits below so concurrent reviews on
+    // this camera can't all pass the check while pushes are in flight.
+    // Released again on every path that ends up sending nothing.
+    cooldownReservedAt = Date.now();
+    reviewCooldowns.set(cameraName, cooldownReservedAt);
   }
+
+  const releaseCooldown = () => {
+    if (
+      cooldownReservedAt !== null &&
+      reviewCooldowns.get(cameraName) === cooldownReservedAt
+    ) {
+      reviewCooldowns.delete(cameraName);
+    }
+  };
 
   // Apply per-camera, global, and notification-filter object lists to the
   // review's object set. The review fires for whatever Frigate tracked; we
@@ -191,7 +225,8 @@ export async function handleFrigateEvent(payload: unknown) {
     console.log(
       `[Notification] Skipped: no allowed labels in review ${reviewId} (had [${objects.join(",")}])`,
     );
-    return;
+    releaseCooldown();
+    return 0;
   }
 
   // Get all push subscriptions with preferences
@@ -201,7 +236,8 @@ export async function handleFrigateEvent(payload: unknown) {
 
   if (subscriptions.length === 0) {
     console.log("[Notification] Skipped: no push subscriptions registered");
-    return;
+    releaseCooldown();
+    return 0;
   }
 
   // Per-subscription preferences. A subscription is eligible if ANY label in
@@ -237,7 +273,8 @@ export async function handleFrigateEvent(payload: unknown) {
     console.log(
       "[Notification] Skipped: all subscriptions filtered by preferences",
     );
-    return;
+    releaseCooldown();
+    return 0;
   }
 
   // Use the first detection's event ID for snapshot + click-through. Review
@@ -320,11 +357,11 @@ export async function handleFrigateEvent(payload: unknown) {
     }
   }
 
-  // Start the cooldown window only when at least one push actually went
-  // out — a transient push-service outage must not rate-limit the camera
-  // on the basis of notifications nobody received.
-  if (sentCount > 0) {
-    reviewCooldowns.set(cameraName, Date.now());
+  if (sentCount === 0) {
+    // Nothing was delivered (e.g. transient push-service failure) — release
+    // the cooldown window so the next review isn't throttled on the basis
+    // of notifications nobody received.
+    releaseCooldown();
   }
 
   console.log(
@@ -346,6 +383,8 @@ export async function handleFrigateEvent(payload: unknown) {
       },
     });
   }
+
+  return sentCount;
 }
 
 const AUDIO_COOLDOWN_MS = 60000; // 1 minute between audio notifications per camera+label
