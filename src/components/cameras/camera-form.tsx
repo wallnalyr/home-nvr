@@ -58,7 +58,7 @@ export function CameraForm({
     detectHeight: camera?.detectHeight ?? 720,
     detectFps: camera?.detectFps ?? 5,
     objectsTrack: camera?.objectsTrack ?? "person,car,cat,dog",
-    audioDetect: camera?.audioDetect ?? "fire_alarm,scream,bark,glass",
+    audioDetect: camera?.audioDetect ?? "fire_alarm,yell,bark,glass",
     recordEnabled: camera?.recordEnabled ?? true,
     recordRetainDays: camera?.recordRetainDays ?? 7,
     snapshotsEnabled: camera?.snapshotsEnabled ?? true,
