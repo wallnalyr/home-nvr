@@ -7,6 +7,8 @@ const CONFIG_YAML = `go2rtc:
       - rtsp://admin:pa/ss@192.168.1.10:554/live
     back:
       - rtsp://admin:P@ssw0rd@192.168.1.11:554/live
+    side:
+      - rtsp://admin:my"pass@192.168.1.12:554/live
 `;
 
 function mockFrigate400(body: string) {
@@ -36,6 +38,15 @@ describe("saveFrigateConfig error redaction", () => {
     expect(err.message).not.toContain("ssw0rd");
     expect(err.message).not.toContain("admin");
     expect(err.message).toContain("***@");
+  });
+
+  it("redacts credentials containing quote characters", async () => {
+    mockFrigate400(
+      'Line 8: invalid input "rtsp://admin:my"pass@192.168.1.12:554/live"',
+    );
+    const err = await saveFrigateConfig(CONFIG_YAML).catch((e: Error) => e);
+    expect(err.message).not.toContain('my"pass');
+    expect(err.message).not.toContain("admin");
   });
 
   it("strips credentials echoed outside a URL shape", async () => {

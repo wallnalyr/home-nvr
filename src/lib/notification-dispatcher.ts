@@ -112,25 +112,30 @@ export async function handleFrigateEvent(payload: unknown) {
   // arrives while we're inside DB queries can't slip past the dedup check.
   rememberReviewId(reviewId);
 
-  let sentCount = 0;
+  // Mutable so the count survives even if sendReviewPushes throws after a
+  // push already went out — the mark below must not be rolled back then.
+  const delivery = { sent: 0 };
   try {
-    sentCount = await sendReviewPushes(after);
+    await sendReviewPushes(after, delivery);
   } finally {
     // A review nobody was actually notified about must stay retryable — a
     // later detection → alert escalation, or a redelivery after a transient
     // failure, should get another chance. Keep the dedup mark only when a
     // push went out.
-    if (sentCount === 0) {
+    if (delivery.sent === 0) {
       recentReviewIds.delete(reviewId);
     }
   }
 }
 
 /**
- * Runs the filter cascade and sends the pushes for one review segment.
- * Returns the number of successful sends (0 = nobody was notified).
+ * Runs the filter cascade and sends the pushes for one review segment,
+ * incrementing delivery.sent per successful push (0 = nobody was notified).
  */
-async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
+async function sendReviewPushes(
+  after: FrigateReviewSegment,
+  delivery: { sent: number },
+): Promise<void> {
   const {
     id: reviewId,
     camera: cameraName,
@@ -144,7 +149,7 @@ async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
 
   if (objects.length === 0) {
     console.log(`[Notification] Skipped: review ${reviewId} has no objects`);
-    return 0;
+    return;
   }
 
   // Look up camera in DB by slug (Frigate uses slug as camera identifier)
@@ -155,7 +160,7 @@ async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
     console.log(
       `[Notification] Skipped: camera "${cameraName}" not found, disabled, or notifications off`,
     );
-    return 0;
+    return;
   }
 
   // Per-camera cooldown (notifyCooldownSec; 0 disables)
@@ -167,7 +172,7 @@ async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
       console.log(
         `[Notification] Skipped: cooldown active for ${cameraName} (${Math.ceil((cooldownMs - sinceMs) / 1000)}s left)`,
       );
-      return 0;
+      return;
     }
     // Reserve the window before the awaits below so concurrent reviews on
     // this camera can't all pass the check while pushes are in flight.
@@ -226,7 +231,7 @@ async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
       `[Notification] Skipped: no allowed labels in review ${reviewId} (had [${objects.join(",")}])`,
     );
     releaseCooldown();
-    return 0;
+    return;
   }
 
   // Get all push subscriptions with preferences
@@ -237,7 +242,7 @@ async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
   if (subscriptions.length === 0) {
     console.log("[Notification] Skipped: no push subscriptions registered");
     releaseCooldown();
-    return 0;
+    return;
   }
 
   // Per-subscription preferences. A subscription is eligible if ANY label in
@@ -274,7 +279,7 @@ async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
       "[Notification] Skipped: all subscriptions filtered by preferences",
     );
     releaseCooldown();
-    return 0;
+    return;
   }
 
   // Use the first detection's event ID for snapshot + click-through. Review
@@ -328,8 +333,6 @@ async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
     },
   };
 
-  let sentCount = 0;
-
   for (const sub of eligibleSubscriptions) {
     try {
       await webpush.sendNotification(
@@ -339,7 +342,7 @@ async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
         },
         JSON.stringify(notificationPayload),
       );
-      sentCount++;
+      delivery.sent++;
     } catch (error: unknown) {
       const statusCode = (error as { statusCode?: number }).statusCode;
       const message = (error as { message?: string }).message;
@@ -347,7 +350,11 @@ async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
         console.log(
           `[Notification] Removing expired subscription: ${sub.endpoint.slice(0, 60)}...`,
         );
-        await prisma.pushSubscription.delete({ where: { id: sub.id } });
+        // Tolerate a concurrent handler having already removed the row —
+        // a throw here would abort sends to the remaining subscriptions
+        await prisma.pushSubscription
+          .delete({ where: { id: sub.id } })
+          .catch(() => {});
       } else {
         console.error(
           `[Notification] Failed to send push (HTTP ${statusCode}):`,
@@ -356,6 +363,8 @@ async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
       }
     }
   }
+
+  const sentCount = delivery.sent;
 
   if (sentCount === 0) {
     // Nothing was delivered (e.g. transient push-service failure) — release
@@ -370,21 +379,24 @@ async function sendReviewPushes(after: FrigateReviewSegment): Promise<number> {
 
   // One log row per label in the review, keyed by review ID for dedup
   // analysis. eventId stores the underlying detection ID for traceability
-  // back into Frigate's events API.
+  // back into Frigate's events API. Best-effort: a failed write must not
+  // reject the function after pushes were already delivered.
   for (const label of allowedLabels) {
-    await prisma.notificationLog.create({
-      data: {
-        reviewId,
-        eventId: clickEventId,
-        camera: cameraName,
-        objectType: label,
-        sentCount,
-        snapshotUrl,
-      },
-    });
+    try {
+      await prisma.notificationLog.create({
+        data: {
+          reviewId,
+          eventId: clickEventId,
+          camera: cameraName,
+          objectType: label,
+          sentCount,
+          snapshotUrl,
+        },
+      });
+    } catch (error) {
+      console.error("[Notification] Failed to write notification log:", error);
+    }
   }
-
-  return sentCount;
 }
 
 const AUDIO_COOLDOWN_MS = 60000; // 1 minute between audio notifications per camera+label

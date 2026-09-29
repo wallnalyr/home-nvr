@@ -97,12 +97,12 @@ export async function saveFrigateConfig(configYaml: string) {
     // Frigate's validation errors can echo config context, including camera
     // RTSP URLs with credentials — redact and bound the body before it
     // travels into thrown errors and API responses (configWarning).
-    // Greedy to the LAST @ in the token so passwords containing '/' or '@'
-    // are over-redacted rather than leaked.
-    let body = raw.replace(/rtsps?:\/\/[^\s"']*@/gi, "rtsp://***@");
+    // Greedy to the LAST @ in the token so passwords containing '/', '@',
+    // or quotes are over-redacted rather than leaked.
+    let body = raw.replace(/rtsps?:\/\/\S*@/gi, "rtsp://***@");
     // Belt and suspenders: strip the exact credential substrings from the
     // config we just pushed, in case an error echoes them outside a URL.
-    for (const match of configYaml.matchAll(/rtsps?:\/\/([^\s"']*)@/gi)) {
+    for (const match of configYaml.matchAll(/rtsps?:\/\/(\S*)@/gi)) {
       if (match[1] && match[1].length >= 3) {
         body = body.split(`${match[1]}@`).join("***@");
       }

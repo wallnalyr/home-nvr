@@ -76,10 +76,11 @@ export function MotionMaskEditor({
       const rect = svg.getBoundingClientRect();
       const x = (e.clientX - rect.left) / rect.width;
       const y = (e.clientY - rect.top) / rect.height;
-      return [
-        Math.max(0, Math.min(1, x)),
-        Math.max(0, Math.min(1, y)),
-      ] as Point;
+      // 4-decimal precision (1/10000 of the frame) keeps the serialized
+      // JSON of a maxed-out drawing comfortably under MAX_MASK_JSON_LENGTH
+      const round = (v: number) =>
+        Math.round(Math.max(0, Math.min(1, v)) * 10000) / 10000;
+      return [round(x), round(y)] as Point;
     },
     [],
   );

@@ -185,6 +185,28 @@ describe("handleFrigateEvent severity gating", () => {
     await dispatcher.handleFrigateEvent(makeReview());
     expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps the dedup mark when a failure follows a delivered push", async () => {
+    // A notification-log write failing after the push went out must not
+    // make a redelivered copy of the same review send a duplicate.
+    mocks.cameraFindFirst.mockResolvedValue(makeCamera({ notifyCooldownSec: 0 }));
+    mocks.logCreate.mockRejectedValueOnce(new Error("SQLITE_BUSY"));
+    await dispatcher.handleFrigateEvent(makeReview());
+    await dispatcher.handleFrigateEvent(makeReview());
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues sending to remaining subscriptions when expired-sub cleanup fails", async () => {
+    mocks.subscriptionFindMany.mockResolvedValue([
+      { id: "s1", endpoint: "https://push/1", p256dh: "k", auth: "a", preferences: [] },
+      { id: "s2", endpoint: "https://push/2", p256dh: "k", auth: "a", preferences: [] },
+    ]);
+    const gone = Object.assign(new Error("gone"), { statusCode: 410 });
+    mocks.sendNotification.mockRejectedValueOnce(gone).mockResolvedValue({});
+    mocks.subscriptionDelete.mockRejectedValue(new Error("P2025"));
+    await dispatcher.handleFrigateEvent(makeReview());
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("handleFrigateEvent per-camera cooldown", () => {
