@@ -11,6 +11,10 @@ import type { NotificationPayload } from "@/types/notification";
 // Audio cooldown: camera-label -> last notification timestamp
 const audioCooldowns = new Map<string, number>();
 
+// Object review cooldown: camera -> last notification timestamp. Enforces
+// the per-camera Camera.notifyCooldownSec setting.
+const reviewCooldowns = new Map<string, number>();
+
 // Recently-notified review IDs. Frigate should only emit `new` once per review,
 // but guard against MQTT redelivery and listener restart races. Entries auto-expire.
 const recentReviewIds = new Map<string, number>();
@@ -72,20 +76,31 @@ export async function handleFrigateEvent(payload: unknown) {
   // Treat everything else as a frigate/reviews payload
   const review = payload as FrigateReviewPayload;
 
-  // Only fire on the start of a new review. `update` events fire mid-review
-  // when new objects/zones appear; `end` fires when activity stops. We only
-  // want one push per review, so ignore the rest.
-  if (review.type !== "new") return;
+  // Fire on the start of a new review, or on an update that escalates a
+  // review from detection to alert severity. `end` only marks activity
+  // stopping. `new` messages are deliberately NOT gated on severity: Frigate
+  // may still be running a config from before this app promoted tracked
+  // labels to alert labels (config pushes can lag until a Frigate restart),
+  // and under that config tracked labels like cat/dog arrive as
+  // `detection`. The allowed-label filter below already drops anything the
+  // user doesn't track.
+  if (review.type !== "new" && review.type !== "update") return;
 
   const { after } = review;
   if (!after || !after.id || !after.camera || !after.data) return;
 
-  const {
-    id: reviewId,
-    camera: cameraName,
-    severity,
-    data: { objects = [], detections = [] },
-  } = after;
+  const { id: reviewId, severity } = after;
+
+  if (review.type === "update") {
+    // Updates fire for many mid-review changes (new objects, zones). Only a
+    // detection → alert escalation may notify; anything already notified is
+    // deduped below. One accepted gap: a review notified at detection
+    // severity that escalates after the dedup TTL expires re-notifies —
+    // the escalation carries genuinely new information.
+    const escalated =
+      severity === "alert" && review.before?.severity !== "alert";
+    if (!escalated) return;
+  }
 
   if (alreadyNotifiedReview(reviewId)) {
     console.log(
@@ -96,6 +111,37 @@ export async function handleFrigateEvent(payload: unknown) {
   // Mark before any awaits so a duplicate delivery of the same review that
   // arrives while we're inside DB queries can't slip past the dedup check.
   rememberReviewId(reviewId);
+
+  // Mutable so the count survives even if sendReviewPushes throws after a
+  // push already went out — the mark below must not be rolled back then.
+  const delivery = { sent: 0 };
+  try {
+    await sendReviewPushes(after, delivery);
+  } finally {
+    // A review nobody was actually notified about must stay retryable — a
+    // later detection → alert escalation, or a redelivery after a transient
+    // failure, should get another chance. Keep the dedup mark only when a
+    // push went out.
+    if (delivery.sent === 0) {
+      recentReviewIds.delete(reviewId);
+    }
+  }
+}
+
+/**
+ * Runs the filter cascade and sends the pushes for one review segment,
+ * incrementing delivery.sent per successful push (0 = nobody was notified).
+ */
+async function sendReviewPushes(
+  after: FrigateReviewSegment,
+  delivery: { sent: number },
+): Promise<void> {
+  const {
+    id: reviewId,
+    camera: cameraName,
+    severity,
+    data: { objects = [], detections = [] },
+  } = after;
 
   console.log(
     `[Notification] New review: ${severity} on ${cameraName} (${reviewId}) objects=[${objects.join(",")}]`,
@@ -116,6 +162,33 @@ export async function handleFrigateEvent(payload: unknown) {
     );
     return;
   }
+
+  // Per-camera cooldown (notifyCooldownSec; 0 disables)
+  const cooldownMs = camera.notifyCooldownSec * 1000;
+  let cooldownReservedAt: number | null = null;
+  if (cooldownMs > 0) {
+    const sinceMs = Date.now() - (reviewCooldowns.get(cameraName) ?? 0);
+    if (sinceMs < cooldownMs) {
+      console.log(
+        `[Notification] Skipped: cooldown active for ${cameraName} (${Math.ceil((cooldownMs - sinceMs) / 1000)}s left)`,
+      );
+      return;
+    }
+    // Reserve the window before the awaits below so concurrent reviews on
+    // this camera can't all pass the check while pushes are in flight.
+    // Released again on every path that ends up sending nothing.
+    cooldownReservedAt = Date.now();
+    reviewCooldowns.set(cameraName, cooldownReservedAt);
+  }
+
+  const releaseCooldown = () => {
+    if (
+      cooldownReservedAt !== null &&
+      reviewCooldowns.get(cameraName) === cooldownReservedAt
+    ) {
+      reviewCooldowns.delete(cameraName);
+    }
+  };
 
   // Apply per-camera, global, and notification-filter object lists to the
   // review's object set. The review fires for whatever Frigate tracked; we
@@ -139,7 +212,14 @@ export async function handleFrigateEvent(payload: unknown) {
     ? JSON.parse(notifObjRow.value)
     : null;
 
-  const allowedLabels = objects.filter(
+  // Frigate rewrites sub-labeled objects in review payloads (a recognized
+  // person arrives as "person-verified") — strip the suffix so they still
+  // match the tracked-label lists.
+  const reviewLabels = [
+    ...new Set(objects.map((label) => label.replace(/-verified$/, ""))),
+  ];
+
+  const allowedLabels = reviewLabels.filter(
     (label) =>
       globalObjects.includes(label) &&
       cameraObjects.includes(label) &&
@@ -150,6 +230,7 @@ export async function handleFrigateEvent(payload: unknown) {
     console.log(
       `[Notification] Skipped: no allowed labels in review ${reviewId} (had [${objects.join(",")}])`,
     );
+    releaseCooldown();
     return;
   }
 
@@ -160,6 +241,7 @@ export async function handleFrigateEvent(payload: unknown) {
 
   if (subscriptions.length === 0) {
     console.log("[Notification] Skipped: no push subscriptions registered");
+    releaseCooldown();
     return;
   }
 
@@ -196,6 +278,7 @@ export async function handleFrigateEvent(payload: unknown) {
     console.log(
       "[Notification] Skipped: all subscriptions filtered by preferences",
     );
+    releaseCooldown();
     return;
   }
 
@@ -250,8 +333,6 @@ export async function handleFrigateEvent(payload: unknown) {
     },
   };
 
-  let sentCount = 0;
-
   for (const sub of eligibleSubscriptions) {
     try {
       await webpush.sendNotification(
@@ -261,7 +342,7 @@ export async function handleFrigateEvent(payload: unknown) {
         },
         JSON.stringify(notificationPayload),
       );
-      sentCount++;
+      delivery.sent++;
     } catch (error: unknown) {
       const statusCode = (error as { statusCode?: number }).statusCode;
       const message = (error as { message?: string }).message;
@@ -269,7 +350,11 @@ export async function handleFrigateEvent(payload: unknown) {
         console.log(
           `[Notification] Removing expired subscription: ${sub.endpoint.slice(0, 60)}...`,
         );
-        await prisma.pushSubscription.delete({ where: { id: sub.id } });
+        // Tolerate a concurrent handler having already removed the row —
+        // a throw here would abort sends to the remaining subscriptions
+        await prisma.pushSubscription
+          .delete({ where: { id: sub.id } })
+          .catch(() => {});
       } else {
         console.error(
           `[Notification] Failed to send push (HTTP ${statusCode}):`,
@@ -279,24 +364,38 @@ export async function handleFrigateEvent(payload: unknown) {
     }
   }
 
+  const sentCount = delivery.sent;
+
+  if (sentCount === 0) {
+    // Nothing was delivered (e.g. transient push-service failure) — release
+    // the cooldown window so the next review isn't throttled on the basis
+    // of notifications nobody received.
+    releaseCooldown();
+  }
+
   console.log(
     `[Notification] Sent ${sentCount}/${eligibleSubscriptions.length} notifications for [${labelTitles.join(", ")}] on ${cameraName} (review ${reviewId})`,
   );
 
   // One log row per label in the review, keyed by review ID for dedup
   // analysis. eventId stores the underlying detection ID for traceability
-  // back into Frigate's events API.
+  // back into Frigate's events API. Best-effort: a failed write must not
+  // reject the function after pushes were already delivered.
   for (const label of allowedLabels) {
-    await prisma.notificationLog.create({
-      data: {
-        reviewId,
-        eventId: clickEventId,
-        camera: cameraName,
-        objectType: label,
-        sentCount,
-        snapshotUrl,
-      },
-    });
+    try {
+      await prisma.notificationLog.create({
+        data: {
+          reviewId,
+          eventId: clickEventId,
+          camera: cameraName,
+          objectType: label,
+          sentCount,
+          snapshotUrl,
+        },
+      });
+    } catch (error) {
+      console.error("[Notification] Failed to write notification log:", error);
+    }
   }
 }
 

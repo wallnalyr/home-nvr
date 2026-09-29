@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { DEFAULT_ENABLED_OBJECTS, DEFAULT_ENABLED_AUDIO } from "@/lib/objects";
+import { isValidMaskPayload, MAX_MASK_JSON_LENGTH } from "@/lib/frigate-masks";
 import { z } from "zod/v4";
 
 const CAMERA_NAME_REGEX = /^[a-zA-Z0-9 _\-'.]+$/;
@@ -49,7 +50,16 @@ const updateCameraSchema = z.object({
   notifyEnabled: z.boolean().optional(),
   notifyCooldownSec: z.number().int().min(0).max(3600).optional(),
   motionThreshold: z.number().int().min(1).max(255).optional(),
-  motionMask: z.string().nullable().optional(),
+  motionMask: z
+    .string()
+    .max(MAX_MASK_JSON_LENGTH)
+    .transform((v) => (v === "" ? null : v))
+    .refine(
+      (v) => v === null || isValidMaskPayload(v),
+      "Invalid exclusion zone data",
+    )
+    .nullable()
+    .optional(),
   sortOrder: z.number().int().min(0).optional(),
 });
 
@@ -81,7 +91,14 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     const updateData: Record<string, unknown> = { ...data };
     if (data.name) {
-      updateData.slug = toSlug(data.name);
+      const slug = toSlug(data.name);
+      if (!slug) {
+        return NextResponse.json(
+          { error: "Camera name must contain at least one letter or number" },
+          { status: 400 },
+        );
+      }
+      updateData.slug = slug;
     }
 
     // Filter objectsTrack against globally enabled objects

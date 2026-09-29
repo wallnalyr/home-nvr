@@ -11,6 +11,7 @@ import { useEnabledObjects } from "@/hooks/use-enabled-objects";
 import { useEnabledAudio } from "@/hooks/use-enabled-audio";
 import { ALL_OBJECTS, AUDIO_LABELS } from "@/lib/objects";
 import { cn } from "@/lib/utils";
+import { isValidMaskPayload } from "@/lib/frigate-masks";
 import { MotionMaskEditor } from "@/components/cameras/motion-mask-editor";
 import type { Camera, CameraFormData } from "@/types/camera";
 
@@ -64,7 +65,13 @@ export function CameraForm({
     notifyEnabled: camera?.notifyEnabled ?? true,
     notifyCooldownSec: camera?.notifyCooldownSec ?? 30,
     motionThreshold: camera?.motionThreshold ?? 30,
-    motionMask: camera?.motionMask ?? undefined,
+    // Drop stored masks that predate API validation and no longer pass it —
+    // otherwise every auto-save of this camera would 400 on the stale value.
+    // The user can redraw; config generation ignores invalid rows anyway.
+    motionMask:
+      camera?.motionMask && isValidMaskPayload(camera.motionMask)
+        ? camera.motionMask
+        : undefined,
   });
 
   const fetchDetectCheck = useCallback(() => {
@@ -411,17 +418,20 @@ export function CameraForm({
           )}
         </div>
 
-        {/* Motion Mask — only available when editing (needs slug for snapshot) */}
+        {/* Exclusion zones — only available when editing (needs slug for snapshot) */}
         {camera && (
           <div className="space-y-2">
-            <Label>Motion Mask</Label>
+            <Label>Exclusion Zones</Label>
             <p className="text-xs text-muted-foreground">
-              Draw areas to ignore for motion detection
+              Draw zones where motion and objects are ignored — nothing inside
+              them triggers alerts
             </p>
             <MotionMaskEditor
               cameraSlug={camera.slug}
               value={form.motionMask ?? null}
-              onChange={(mask) => update("motionMask", mask ?? undefined, true)}
+              // null must reach the PUT body — `?? undefined` here made
+              // JSON.stringify drop the key, so clearing zones never saved
+              onChange={(mask) => update("motionMask", mask, true)}
               detectWidth={form.detectWidth ?? 1280}
               detectHeight={form.detectHeight ?? 720}
             />

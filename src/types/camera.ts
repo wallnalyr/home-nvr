@@ -42,7 +42,8 @@ export interface CameraFormData {
   notifyEnabled?: boolean;
   notifyCooldownSec?: number;
   motionThreshold?: number;
-  motionMask?: string;
+  // null explicitly clears stored zones on save; undefined leaves them as-is
+  motionMask?: string | null;
   sortOrder?: number;
 }
 
