@@ -245,34 +245,11 @@ async function sendReviewPushes(
     return;
   }
 
-  // Per-subscription preferences. A subscription is eligible if ANY label in
-  // the review's allowed-label set passes the preference cascade.
-  const eligibleSubscriptions = subscriptions.filter((sub) => {
-    const prefs = sub.preferences;
-    return allowedLabels.some((label) => {
-      const specific = prefs.find(
-        (p) => p.camera === cameraName && p.objectType === label,
-      );
-      if (specific) return specific.enabled;
-
-      const cameraAll = prefs.find(
-        (p) => p.camera === cameraName && p.objectType === "*",
-      );
-      if (cameraAll) return cameraAll.enabled;
-
-      const allCameraSpecific = prefs.find(
-        (p) => p.camera === "*" && p.objectType === label,
-      );
-      if (allCameraSpecific) return allCameraSpecific.enabled;
-
-      const global = prefs.find(
-        (p) => p.camera === "*" && p.objectType === "*",
-      );
-      if (global) return global.enabled;
-
-      return true;
-    });
-  });
+  const eligibleSubscriptions = filterEligibleSubscriptions(
+    subscriptions,
+    cameraName,
+    allowedLabels,
+  );
 
   if (eligibleSubscriptions.length === 0) {
     console.log(
@@ -399,7 +376,54 @@ async function sendReviewPushes(
   }
 }
 
+interface SubscriptionPreference {
+  camera: string;
+  objectType: string;
+  enabled: boolean;
+}
+
+/**
+ * Per-subscription preference cascade, most-specific rule first
+ * (camera+label, camera+*, *+label, *+*), defaulting to allow. A
+ * subscription is eligible if ANY of the given labels passes. Audio labels
+ * use the same objectType field as object labels.
+ */
+function filterEligibleSubscriptions<
+  T extends { preferences: SubscriptionPreference[] },
+>(subscriptions: T[], cameraName: string, labels: string[]): T[] {
+  return subscriptions.filter((sub) => {
+    const prefs = sub.preferences;
+    return labels.some((label) => {
+      const specific = prefs.find(
+        (p) => p.camera === cameraName && p.objectType === label,
+      );
+      if (specific) return specific.enabled;
+
+      const cameraAll = prefs.find(
+        (p) => p.camera === cameraName && p.objectType === "*",
+      );
+      if (cameraAll) return cameraAll.enabled;
+
+      const allCameraSpecific = prefs.find(
+        (p) => p.camera === "*" && p.objectType === label,
+      );
+      if (allCameraSpecific) return allCameraSpecific.enabled;
+
+      const global = prefs.find(
+        (p) => p.camera === "*" && p.objectType === "*",
+      );
+      if (global) return global.enabled;
+
+      return true;
+    });
+  });
+}
+
 const AUDIO_COOLDOWN_MS = 60000; // 1 minute between audio notifications per camera+label
+
+// Frigate publishes activity subtopics under <camera>/audio/ that are not
+// sound labels; they are expected traffic, not vocabulary mismatches.
+const NON_LABEL_AUDIO_TOPICS = new Set(["all", "state", "dBFS", "rms"]);
 
 async function handleAudioEvent(payload: AudioEventPayload) {
   const { camera: cameraName, label, state } = payload;
@@ -408,7 +432,16 @@ async function handleAudioEvent(payload: AudioEventPayload) {
   if (state !== "ON") return;
 
   const audioDef = getAudioLabelById(label);
-  if (!audioDef) return;
+  if (!audioDef) {
+    // Log real vocabulary mismatches — a silently dropped label made the
+    // scream/car_horn bug undiagnosable for months.
+    if (!NON_LABEL_AUDIO_TOPICS.has(label)) {
+      console.log(
+        `[Notification] Audio skipped: unknown label "${label}" on ${cameraName}`,
+      );
+    }
+    return;
+  }
 
   console.log(`[Notification] Audio: ${label} on ${cameraName}`);
 
@@ -469,11 +502,24 @@ async function handleAudioEvent(payload: AudioEventPayload) {
     }
   }
 
-  // Get subscriptions (reuse same preference system — audio uses label as objectType)
+  // Same preference cascade as object reviews — audio uses the label as
+  // the preference objectType
   const subscriptions = await prisma.pushSubscription.findMany({
     include: { preferences: true },
   });
   if (subscriptions.length === 0) return;
+
+  const eligibleSubscriptions = filterEligibleSubscriptions(
+    subscriptions,
+    cameraName,
+    [label],
+  );
+  if (eligibleSubscriptions.length === 0) {
+    console.log(
+      "[Notification] Audio skipped: all subscriptions filtered by preferences",
+    );
+    return;
+  }
 
   const displayName = camera.name;
   const displayLabel = audioDef.label;
@@ -498,7 +544,7 @@ async function handleAudioEvent(payload: AudioEventPayload) {
   };
 
   let sentCount = 0;
-  for (const sub of subscriptions) {
+  for (const sub of eligibleSubscriptions) {
     try {
       await webpush.sendNotification(
         {

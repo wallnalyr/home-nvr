@@ -147,10 +147,11 @@ export async function generateFrigateConfig(): Promise<string> {
     // Use slug as the Frigate camera identifier (no spaces, lowercase)
     const cameraId = camera.slug;
 
-    const audioLabels = camera.audioDetect
-      .split(",")
-      .map((a) => a.trim())
-      .filter((a) => a && globalAudio.has(a));
+    // Deduped: the audio-label rename migration can leave a repeated label
+    // when a camera had both the legacy and current id selected
+    const audioLabels = [
+      ...new Set(camera.audioDetect.split(",").map((a) => a.trim())),
+    ].filter((a) => a && globalAudio.has(a));
     const hasAudio = audioLabels.length > 0;
 
     // go2rtc streams — main stream always, sub stream as separate entry.
