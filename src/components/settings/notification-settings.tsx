@@ -8,6 +8,7 @@ import { useEnabledObjects } from "@/hooks/use-enabled-objects";
 import { useEnabledAudio } from "@/hooks/use-enabled-audio";
 import { ALL_OBJECTS, AUDIO_LABELS } from "@/lib/objects";
 import { Loader2, Volume2 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 export function NotificationSettings() {
@@ -91,7 +92,11 @@ export function NotificationSettings() {
       if (res.ok) {
         mutate();
         setDirty(false);
+      } else {
+        toast.error("Failed to save notification settings — refresh and try again");
       }
+    } catch {
+      toast.error("Failed to save notification settings — refresh and try again");
     } finally {
       setSaving(false);
     }
@@ -139,7 +144,11 @@ export function NotificationSettings() {
       if (res.ok) {
         mutateAudioNotif();
         setAudioDirty(false);
+      } else {
+        toast.error("Failed to save notification settings — refresh and try again");
       }
+    } catch {
+      toast.error("Failed to save notification settings — refresh and try again");
     } finally {
       setSaving(false);
     }

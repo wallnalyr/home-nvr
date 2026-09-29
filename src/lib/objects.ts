@@ -78,8 +78,9 @@ export const AUDIO_LABELS: AudioLabelDef[] = [
   { id: "car_alarm", label: "Car Alarm", category: "alarm" },
   { id: "siren", label: "Siren", category: "alarm" },
   // Voice
-  { id: "scream", label: "Scream", category: "voice" },
-  { id: "yell", label: "Yell", category: "voice" },
+  // Frigate's audio labelmap has no "scream" — YAMNet's "Screaming" class
+  // maps to "yell", so one label covers both.
+  { id: "yell", label: "Scream / Yell", category: "voice" },
   { id: "speech", label: "Speech", category: "voice" },
   { id: "crying", label: "Crying", category: "voice" },
   // Animal
@@ -91,7 +92,8 @@ export const AUDIO_LABELS: AudioLabelDef[] = [
   { id: "door", label: "Door", category: "environment" },
   { id: "gunshot", label: "Gunshot", category: "environment" },
   { id: "explosion", label: "Explosion", category: "environment" },
-  { id: "car_horn", label: "Car Horn", category: "environment" },
+  // Frigate's labelmap name for vehicle horns is "honk"
+  { id: "honk", label: "Car Horn", category: "environment" },
 ];
 
 export const AUDIO_CATEGORIES = [
@@ -101,7 +103,22 @@ export const AUDIO_CATEGORIES = [
   { id: "environment" as const, label: "Environment" },
 ];
 
-export const DEFAULT_ENABLED_AUDIO = ["fire_alarm", "smoke_detector", "scream", "bark", "glass"];
+export const DEFAULT_ENABLED_AUDIO = ["fire_alarm", "smoke_detector", "yell", "bark", "glass"];
+
+// Historical label ids that never existed in Frigate's audio labelmap.
+// Stored values are converted by the rename_audio_labels DB migration, but
+// stale clients (open tabs, cached PWA bundles) can still send the old ids
+// after the deploy — every write path accepts and converts them via
+// normalizeAudioLabels instead of rejecting or silently dropping.
+export const LEGACY_AUDIO_LABEL_MAP: Record<string, string> = {
+  scream: "yell",
+  car_horn: "honk",
+};
+
+/** Convert legacy audio label ids and dedupe, preserving first-seen order. */
+export function normalizeAudioLabels(ids: string[]): string[] {
+  return [...new Set(ids.map((id) => LEGACY_AUDIO_LABEL_MAP[id] ?? id))];
+}
 
 export function getAudioLabelById(id: string): AudioLabelDef | undefined {
   return AUDIO_LABELS.find((a) => a.id === id);

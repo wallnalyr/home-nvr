@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { DEFAULT_ENABLED_OBJECTS, DEFAULT_ENABLED_AUDIO } from "@/lib/objects";
+import {
+  DEFAULT_ENABLED_OBJECTS,
+  DEFAULT_ENABLED_AUDIO,
+  normalizeAudioLabels,
+} from "@/lib/objects";
 import { isValidMaskPayload, MAX_MASK_JSON_LENGTH } from "@/lib/frigate-masks";
 import { z } from "zod/v4";
 
@@ -124,9 +128,11 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       const globalAudio = new Set<string>(
         audioRow ? JSON.parse(audioRow.value) : DEFAULT_ENABLED_AUDIO
       );
-      updateData.audioDetect = data.audioDetect
-        .split(",")
-        .map((a) => a.trim())
+      // Convert legacy ids BEFORE the global filter so a stale client's
+      // "scream" survives as "yell" instead of being silently dropped
+      updateData.audioDetect = normalizeAudioLabels(
+        data.audioDetect.split(",").map((a) => a.trim()),
+      )
         .filter((a) => a && globalAudio.has(a))
         .join(",");
     }

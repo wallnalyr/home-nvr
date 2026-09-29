@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Bookmark, CheckSquare, Trash2, X } from "lucide-react";
+import { getAudioLabelById } from "@/lib/objects";
 import type { Camera } from "@/types/camera";
 
 interface EventFiltersProps {
@@ -149,7 +150,11 @@ export function EventFilters({
     { value: "all", label: "All" },
     ...enabledObjects.map((l) => ({
       value: l,
-      label: l.charAt(0).toUpperCase() + l.slice(1).replace(/_/g, " "),
+      // Audio ids use their display names (e.g. "honk" → "Car Horn") so
+      // the filter matches what the rest of the app calls the sound
+      label:
+        getAudioLabelById(l)?.label ??
+        l.charAt(0).toUpperCase() + l.slice(1).replace(/_/g, " "),
     })),
   ];
 

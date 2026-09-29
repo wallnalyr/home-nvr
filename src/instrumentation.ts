@@ -1,5 +1,14 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // Self-heal stored audio label vocabulary (legacy ids, duplicates)
+    // before anything reads it — see normalize-stored-audio.ts
+    const { normalizeStoredAudioLabels } = await import(
+      "@/lib/normalize-stored-audio"
+    );
+    await normalizeStoredAudioLabels().catch((err) => {
+      console.error("[Audio] Label normalization failed:", err);
+    });
+
     // Push Frigate config on startup (cameras may have been added while Frigate was starting)
     const { regenerateFrigateConfig } = await import(
       "@/lib/frigate-config-gen"

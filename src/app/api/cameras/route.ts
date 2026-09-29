@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { DEFAULT_ENABLED_AUDIO, DEFAULT_ENABLED_OBJECTS } from "@/lib/objects";
+import {
+  DEFAULT_ENABLED_AUDIO,
+  DEFAULT_ENABLED_OBJECTS,
+  normalizeAudioLabels,
+} from "@/lib/objects";
 import { isValidMaskPayload, MAX_MASK_JSON_LENGTH } from "@/lib/frigate-masks";
 import { z } from "zod/v4";
 
@@ -101,6 +105,14 @@ export async function POST(request: NextRequest) {
       data.audioDetect = audioRow
         ? JSON.parse(audioRow.value).join(",")
         : DEFAULT_ENABLED_AUDIO.join(",");
+    } else {
+      // Stale clients may still send legacy ids (scream/car_horn) —
+      // convert so a dead id can't be stored past the DB migration
+      data.audioDetect = normalizeAudioLabels(
+        data.audioDetect.split(",").map((a) => a.trim()),
+      )
+        .filter(Boolean)
+        .join(",");
     }
 
     const camera = await prisma.camera.create({

@@ -24,7 +24,7 @@ model Camera {
   objectsTrack    String   @default("person,car,cat,dog") // comma-separated
 
   // Audio detection (comma-separated labels, empty string = disabled)
-  audioDetect     String   @default("fire_alarm,scream,bark,glass")
+  audioDetect     String   @default("fire_alarm,yell,bark,glass")
 
   // Recording settings
   recordEnabled   Boolean  @default(true)
