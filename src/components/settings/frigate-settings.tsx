@@ -6,6 +6,7 @@ import { authFetcher } from "@/lib/fetcher";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 export function FrigateSettings() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -25,10 +26,19 @@ export function FrigateSettings() {
     setRegenerating(true);
     try {
       const res = await fetch("/api/frigate/config", { method: "POST" });
-      if (res.ok) {
-        const yaml = await res.text();
-        setConfigPreview(yaml);
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.pushed) {
+        setConfigPreview(body.configYaml ?? null);
+        toast.success("Config pushed — Frigate is restarting");
+      } else {
+        toast.error(
+          body?.error
+            ? `Config push failed: ${String(body.error).slice(0, 200)}`
+            : "Config push failed",
+        );
       }
+    } catch {
+      toast.error("Config push failed — is the server reachable?");
     } finally {
       setRegenerating(false);
     }

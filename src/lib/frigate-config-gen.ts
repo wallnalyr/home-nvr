@@ -323,8 +323,15 @@ async function runRegenerate(): Promise<void> {
   try {
     await writeFile(configPath, configYaml, "utf-8");
     fileWritten = true;
-  } catch {
-    // Volume may be owned by Frigate (root) — fall through to API
+  } catch (err) {
+    // Frigate rewrites this file as root on every successful API save, so
+    // once that has happened the app (non-root) can never write it again —
+    // the API push becomes the only delivery path. Log it so a dead file
+    // fallback is visible instead of silently narrowing redundancy.
+    console.warn(
+      `[Config] Could not write ${configPath} (continuing via API push):`,
+      err instanceof Error ? err.message : err,
+    );
   }
 
   // Push config via Frigate API with save_option=restart

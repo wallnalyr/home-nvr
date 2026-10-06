@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { ArrowUpDown, Plus, X } from "lucide-react";
+import useSWR from "swr";
+import { ArrowUpDown, Plus, TriangleAlert, X } from "lucide-react";
+import { toast } from "sonner";
+import { authFetcher } from "@/lib/fetcher";
 import { Button } from "@/components/ui/button";
 import { CameraList } from "@/components/cameras/camera-list";
 import { CameraForm } from "@/components/cameras/camera-form";
@@ -16,7 +19,20 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+interface HealthDrift {
+  configDrift: {
+    status: "ok" | "drift" | "unreachable";
+    mismatches: string[];
+  } | null;
+}
+
 export default function CamerasPage() {
+  const { data: health } = useSWR<HealthDrift>(
+    "/api/system/health",
+    authFetcher,
+    { refreshInterval: 60000, revalidateOnFocus: true },
+  );
+  const drift = health?.configDrift;
   const { cameras, mutate } = useCameras();
   const [addingCamera, setAddingCamera] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -61,6 +77,20 @@ export default function CamerasPage() {
     setAddingCamera(false);
   };
 
+  // A camera save can succeed in the DB while the Frigate config push
+  // fails — the PUT then returns 200 with a configWarning. Until now that
+  // warning was dropped on the floor, so zone/setting edits could silently
+  // never reach Frigate.
+  const warnIfConfigStale = (body: unknown) => {
+    const warning = (body as { configWarning?: string } | null)?.configWarning;
+    if (warning) {
+      toast.warning(
+        `Saved, but Frigate hasn't applied it yet: ${warning.slice(0, 180)}`,
+        { duration: 10000 },
+      );
+    }
+  };
+
   const handleEdit = async (data: CameraFormData) => {
     if (!editingId) return;
     const res = await fetch(`/api/cameras/${editingId}`, {
@@ -72,6 +102,7 @@ export default function CamerasPage() {
       const err = await res.json();
       throw new Error(err.error || "Failed to update camera");
     }
+    warnIfConfigStale(await res.json().catch(() => null));
     await mutate();
     setEditingId(null);
   };
@@ -87,6 +118,7 @@ export default function CamerasPage() {
         const err = await res.json();
         throw new Error(err.error || "Failed to save");
       }
+      warnIfConfigStale(await res.json().catch(() => null));
       await mutate();
     },
     [mutate],
@@ -109,6 +141,21 @@ export default function CamerasPage() {
 
   return (
     <div>
+      {drift?.status === "drift" && (
+        <div className="mx-4 mt-3 flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-medium">
+              Frigate is not running your latest camera config
+            </p>
+            <p className="mt-0.5 text-muted-foreground">
+              Exclusion zones or detection settings may be inactive.
+              Auto-repair is retrying; you can also push manually via
+              Settings → Frigate → Regenerate Config.
+            </p>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between px-4 py-3">
         <span className="text-sm text-muted-foreground">
           {cameras.length} camera{cameras.length !== 1 ? "s" : ""}
