@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import useSWR from "swr";
 import { ArrowUpDown, Plus, TriangleAlert, X } from "lucide-react";
 import { toast } from "sonner";
@@ -80,15 +80,19 @@ export default function CamerasPage() {
   // A camera save can succeed in the DB while the Frigate config push
   // fails — the PUT then returns 200 with a configWarning. Until now that
   // warning was dropped on the floor, so zone/setting edits could silently
-  // never reach Frigate.
+  // never reach Frigate. Throttled: auto-save fires on every form change,
+  // and a persistent failure must not toast per keystroke.
+  const lastConfigWarnAtRef = useRef(0);
   const warnIfConfigStale = (body: unknown) => {
     const warning = (body as { configWarning?: string } | null)?.configWarning;
-    if (warning) {
-      toast.warning(
-        `Saved, but Frigate hasn't applied it yet: ${warning.slice(0, 180)}`,
-        { duration: 10000 },
-      );
-    }
+    if (!warning) return;
+    const now = Date.now();
+    if (now - lastConfigWarnAtRef.current < 30000) return;
+    lastConfigWarnAtRef.current = now;
+    toast.warning(
+      `Saved, but Frigate hasn't applied it yet: ${warning.slice(0, 180)}`,
+      { duration: 10000 },
+    );
   };
 
   const handleEdit = async (data: CameraFormData) => {
