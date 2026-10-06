@@ -269,29 +269,26 @@ async function sendReviewPushes(
   let snapshotUrl: string | undefined;
   let boxInfo = "";
   if (firstDetectionId) {
-    try {
-      const snapshotRes = await getFrigateEventSnapshot(firstDetectionId);
-      if (snapshotRes.ok) {
-        snapshotUrl = `/api/frigate/events/${firstDetectionId}/snapshot`;
-      }
-    } catch {
-      // Continue without snapshot
+    // Concurrent so the diagnostics fetch never adds latency beyond the
+    // snapshot fetch that was already in the alert hot path
+    const [snapshotRes, eventRes] = await Promise.allSettled([
+      getFrigateEventSnapshot(firstDetectionId),
+      getFrigateEvent(firstDetectionId),
+    ]);
+    if (snapshotRes.status === "fulfilled" && snapshotRes.value.ok) {
+      snapshotUrl = `/api/frigate/events/${firstDetectionId}/snapshot`;
     }
-    try {
-      // Frigate suppresses an object only when the BOTTOM-CENTER of its
-      // box is inside an exclusion zone — log that point for every push
-      // so "this alerted from inside my zone" is checkable from logs.
-      const event = (await getFrigateEvent(firstDetectionId)) as {
-        data?: { box?: number[] };
-      };
-      const box = event?.data?.box;
+    // Frigate suppresses an object only when the BOTTOM-CENTER of its box
+    // ([x, y, w, h] relative) is inside an exclusion zone — log that point
+    // for every push so "this alerted from inside my zone" is checkable
+    // from logs.
+    if (eventRes.status === "fulfilled") {
+      const box = (eventRes.value as { data?: { box?: number[] } })?.data?.box;
       if (Array.isArray(box) && box.length === 4) {
         const bcx = (box[0] + box[2] / 2).toFixed(3);
         const bcy = (box[1] + box[3]).toFixed(3);
         boxInfo = ` box-bottom-center=(${bcx},${bcy})`;
       }
-    } catch {
-      // Diagnostics only
     }
   }
 

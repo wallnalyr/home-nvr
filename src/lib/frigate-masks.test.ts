@@ -162,6 +162,17 @@ describe("simplifyPolygon", () => {
     }
   });
 
+  it("survives adversarial comb polygons without blowing the stack", () => {
+    // Alternating decaying spikes force worst-case Douglas-Peucker splits
+    const comb: NormalizedPolygon = Array.from({ length: 10000 }, (_, i) => [
+      i / 10000,
+      i % 2 === 0 ? 0.1 : 0.1 + 0.5 * Math.pow(0.9999, i),
+    ]);
+    const simplified = simplifyPolygon(comb);
+    expect(simplified.length).toBeGreaterThanOrEqual(3);
+    expect(simplified.length).toBeLessThanOrEqual(MAX_POLYGON_POINTS);
+  });
+
   it("handles degenerate repeated-point polygons", () => {
     const degenerate: NormalizedPolygon = Array.from(
       { length: 500 },

@@ -23,7 +23,8 @@ export async function POST() {
   // preview containing their changes.
   try {
     await regenerateFrigateConfig();
-    const configYaml = await generateFrigateConfig();
+    // Preview only — its failure must not misreport the successful push
+    const configYaml = await generateFrigateConfig().catch(() => null);
     return NextResponse.json({ pushed: true, configYaml });
   } catch (error) {
     const message =

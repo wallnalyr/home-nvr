@@ -124,6 +124,14 @@ export function simplifyPolygon(
   maxPoints: number = MAX_POLYGON_POINTS,
 ): NormalizedPolygon {
   if (polygon.length <= maxPoints) return polygon;
+  // Douglas-Peucker recursion depth is O(n) on adversarial point orders —
+  // pre-decimate huge inputs so pathological legacy rows can't blow the
+  // stack during config generation.
+  if (polygon.length > 2048) {
+    const step = Math.ceil(polygon.length / 2048);
+    polygon = polygon.filter((_, i) => i % step === 0);
+    if (polygon.length <= maxPoints) return polygon;
+  }
   let epsilon = 0.0005;
   let current = polygon;
   for (let i = 0; i < 12 && current.length > maxPoints; i++) {

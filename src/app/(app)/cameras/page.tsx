@@ -73,6 +73,7 @@ export default function CamerasPage() {
       const err = await res.json();
       throw new Error(err.error || "Failed to add camera");
     }
+    warnIfConfigStale(await res.json().catch(() => null));
     await mutate();
     setAddingCamera(false);
   };

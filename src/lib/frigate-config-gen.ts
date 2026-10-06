@@ -338,6 +338,10 @@ async function runRegenerate(): Promise<void> {
   try {
     const { saveFrigateConfig } = await import("@/lib/frigate-client");
     await saveFrigateConfig(configYaml);
+    // Timestamp read by the drift monitor so it stays quiet while Frigate
+    // restarts from this push instead of reporting spurious drift
+    (globalThis as unknown as { __frigateLastPushAt?: number }).__frigateLastPushAt =
+      Date.now();
     console.log("[Config] Config saved and restart triggered");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

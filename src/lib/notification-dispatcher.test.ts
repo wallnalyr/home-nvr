@@ -202,6 +202,25 @@ describe("handleFrigateEvent severity gating", () => {
     expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
   });
 
+  it("logs the triggering box bottom-center with the push", async () => {
+    // box [x, y, w, h] = [0.4, 0.3, 0.2, 0.25] → bottom-center (0.500, 0.550)
+    const logSpy = vi.spyOn(console, "log");
+    await dispatcher.handleFrigateEvent(makeReview());
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    expect(
+      logSpy.mock.calls.some((c) =>
+        String(c[0]).includes("box-bottom-center=(0.500,0.550)"),
+      ),
+    ).toBe(true);
+    logSpy.mockRestore();
+  });
+
+  it("still delivers the push when the diagnostics event fetch fails", async () => {
+    mocks.getEvent.mockRejectedValue(new Error("frigate restarting"));
+    await dispatcher.handleFrigateEvent(makeReview());
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the dedup mark when a failure follows a delivered push", async () => {
     // A notification-log write failing after the push went out must not
     // make a redelivered copy of the same review send a duplicate.

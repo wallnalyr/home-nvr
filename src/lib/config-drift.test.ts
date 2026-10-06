@@ -13,7 +13,7 @@ vi.mock("@/lib/frigate-client", () => ({
   getFrigateConfig: mocks.getFrigateConfig,
 }));
 
-import { checkConfigDrift } from "@/lib/config-drift";
+import { checkConfigDrift, getDriftReport } from "@/lib/config-drift";
 
 const SQUARE = [
   [0.1, 0.1],
@@ -102,10 +102,41 @@ describe("checkConfigDrift", () => {
     expect(report.mismatches[0]).toContain("missing");
   });
 
-  it("reports unreachable when the Frigate API fails", async () => {
+  it("reports unreachable when the Frigate API fails and persists it", async () => {
     mocks.cameraFindMany.mockResolvedValue([]);
     mocks.getFrigateConfig.mockRejectedValue(new Error("ECONNREFUSED"));
     const report = await checkConfigDrift();
     expect(report.status).toBe("unreachable");
+    // health endpoint must see the outage, not a stale earlier report
+    expect(getDriftReport()?.status).toBe("unreachable");
+  });
+
+  it("flags equal-count coordinate drift with a distinct message and signature", async () => {
+    mocks.cameraFindMany.mockResolvedValue([
+      dbCamera(JSON.stringify([SQUARE])),
+    ]);
+    mocks.getFrigateConfig.mockResolvedValue({
+      cameras: {
+        front: frigateCam(["0.2,0.2,0.8,0.2,0.8,0.6,0.2,0.6"]),
+      },
+    });
+    const report = await checkConfigDrift();
+    expect(report.status).toBe("drift");
+    expect(report.mismatches[0]).toContain("different coordinates");
+    expect(report.signature).toContain("front:");
+    expect(report.signature).toContain("0.2,0.2");
+  });
+
+  it("treats masks disabled in Frigate's UI as absent", async () => {
+    mocks.cameraFindMany.mockResolvedValue([
+      dbCamera(JSON.stringify([SQUARE])),
+    ]);
+    const cam = frigateCam(["0.1,0.1,0.9,0.1,0.9,0.5,0.1,0.5"]);
+    (
+      cam.objects.mask as Record<string, { enabled?: boolean }>
+    ).exclusion_zone_1.enabled = false;
+    mocks.getFrigateConfig.mockResolvedValue({ cameras: { front: cam } });
+    const report = await checkConfigDrift();
+    expect(report.status).toBe("drift");
   });
 });
