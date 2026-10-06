@@ -1,6 +1,9 @@
 import { prisma } from "@/lib/db";
 import { webpush } from "@/lib/webpush";
-import { getFrigateEventSnapshot } from "@/lib/frigate-client";
+import {
+  getFrigateEvent,
+  getFrigateEventSnapshot,
+} from "@/lib/frigate-client";
 import {
   getAudioLabelById,
   DEFAULT_ENABLED_OBJECTS,
@@ -264,6 +267,7 @@ async function sendReviewPushes(
   const firstDetectionId = detections[0];
 
   let snapshotUrl: string | undefined;
+  let boxInfo = "";
   if (firstDetectionId) {
     try {
       const snapshotRes = await getFrigateEventSnapshot(firstDetectionId);
@@ -272,6 +276,22 @@ async function sendReviewPushes(
       }
     } catch {
       // Continue without snapshot
+    }
+    try {
+      // Frigate suppresses an object only when the BOTTOM-CENTER of its
+      // box is inside an exclusion zone — log that point for every push
+      // so "this alerted from inside my zone" is checkable from logs.
+      const event = (await getFrigateEvent(firstDetectionId)) as {
+        data?: { box?: number[] };
+      };
+      const box = event?.data?.box;
+      if (Array.isArray(box) && box.length === 4) {
+        const bcx = (box[0] + box[2] / 2).toFixed(3);
+        const bcy = (box[1] + box[3]).toFixed(3);
+        boxInfo = ` box-bottom-center=(${bcx},${bcy})`;
+      }
+    } catch {
+      // Diagnostics only
     }
   }
 
@@ -351,7 +371,7 @@ async function sendReviewPushes(
   }
 
   console.log(
-    `[Notification] Sent ${sentCount}/${eligibleSubscriptions.length} notifications for [${labelTitles.join(", ")}] on ${cameraName} (review ${reviewId})`,
+    `[Notification] Sent ${sentCount}/${eligibleSubscriptions.length} notifications for [${labelTitles.join(", ")}] on ${cameraName} (review ${reviewId})${boxInfo}`,
   );
 
   // One log row per label in the review, keyed by review ID for dedup

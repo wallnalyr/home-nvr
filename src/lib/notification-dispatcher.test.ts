@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   logCreate: vi.fn(),
   sendNotification: vi.fn(),
   getSnapshot: vi.fn(),
+  getEvent: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -28,6 +29,7 @@ vi.mock("@/lib/webpush", () => ({
 
 vi.mock("@/lib/frigate-client", () => ({
   getFrigateEventSnapshot: mocks.getSnapshot,
+  getFrigateEvent: mocks.getEvent,
 }));
 
 type Dispatcher = typeof import("@/lib/notification-dispatcher");
@@ -101,6 +103,9 @@ beforeEach(async () => {
   mocks.logCreate.mockReset().mockResolvedValue({});
   mocks.sendNotification.mockReset().mockResolvedValue({});
   mocks.getSnapshot.mockReset().mockResolvedValue({ ok: false });
+  mocks.getEvent
+    .mockReset()
+    .mockResolvedValue({ data: { box: [0.4, 0.3, 0.2, 0.25] } });
 
   // Fresh module per test so review dedup / cooldown maps start empty
   vi.resetModules();
