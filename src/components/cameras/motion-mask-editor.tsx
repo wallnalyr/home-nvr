@@ -155,7 +155,10 @@ export function MotionMaskEditor({
           <DialogTitle>Exclusion Zones</DialogTitle>
           <p className="text-xs text-muted-foreground">
             Tap to place points. Motion inside these zones is ignored and
-            objects detected inside them never trigger alerts.
+            objects inside them don&apos;t trigger alerts. Frigate tests the
+            bottom-center of each object&apos;s box — extend zones below
+            the area where things appear (include the ground they stand
+            on), with some margin.
           </p>
         </DialogHeader>
 

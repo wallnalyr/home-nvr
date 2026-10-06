@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getFrigateConfig } from "@/lib/frigate-client";
-import { generateFrigateConfig } from "@/lib/frigate-config-gen";
+import {
+  generateFrigateConfig,
+  regenerateFrigateConfig,
+} from "@/lib/frigate-config-gen";
 
 export async function GET() {
   try {
@@ -14,14 +17,21 @@ export async function GET() {
 }
 
 export async function POST() {
+  // This endpoint previously only generated and RETURNED the YAML without
+  // pushing it — the settings "Regenerate Config" button was a placebo
+  // that left Frigate running its old config while showing the user a
+  // preview containing their changes.
   try {
-    const configYaml = await generateFrigateConfig();
-    return new NextResponse(configYaml, {
-      headers: { "Content-Type": "text/yaml" },
-    });
+    await regenerateFrigateConfig();
+    // Preview only — its failure must not misreport the successful push
+    const configYaml = await generateFrigateConfig().catch(() => null);
+    return NextResponse.json({ pushed: true, configYaml });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to generate config";
-    return NextResponse.json({ error: message }, { status: 500 });
+      error instanceof Error ? error.message : "Failed to push config";
+    return NextResponse.json(
+      { pushed: false, error: message },
+      { status: 502 },
+    );
   }
 }

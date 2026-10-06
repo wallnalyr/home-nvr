@@ -114,10 +114,20 @@ export async function GET() {
     /* not ready */
   }
 
+  // Last config-drift check result (null until the first cycle runs)
+  let configDrift: unknown = null;
+  try {
+    const { getDriftReport } = await import("@/lib/config-drift");
+    configDrift = getDriftReport();
+  } catch {
+    /* not ready */
+  }
+
   return NextResponse.json({
     status: "ok",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    configDrift,
     services: {
       frigate: {
         url: FRIGATE_URL,

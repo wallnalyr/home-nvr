@@ -76,6 +76,88 @@ export function isValidMaskPayload(value: string): boolean {
   );
 }
 
+function perpendicularDistance(
+  p: NormalizedPoint,
+  a: NormalizedPoint,
+  b: NormalizedPoint,
+): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+  const t = Math.max(
+    0,
+    Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / lenSq),
+  );
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
+
+function douglasPeucker(
+  points: NormalizedPolygon,
+  epsilon: number,
+): NormalizedPolygon {
+  if (points.length <= 2) return points;
+  let maxDist = 0;
+  let index = 0;
+  const last = points.length - 1;
+  for (let i = 1; i < last; i++) {
+    const d = perpendicularDistance(points[i], points[0], points[last]);
+    if (d > maxDist) {
+      maxDist = d;
+      index = i;
+    }
+  }
+  if (maxDist <= epsilon) return [points[0], points[last]];
+  const left = douglasPeucker(points.slice(0, index + 1), epsilon);
+  const right = douglasPeucker(points.slice(index), epsilon);
+  return [...left.slice(0, -1), ...right];
+}
+
+/**
+ * Reduce a polygon to at most maxPoints vertices (Douglas-Peucker with an
+ * escalating tolerance, uniform decimation as a last resort). Lets legacy
+ * masks traced with hundreds of points — stored before the editor capped
+ * drawing — stay active instead of being silently dropped.
+ */
+export function simplifyPolygon(
+  polygon: NormalizedPolygon,
+  maxPoints: number = MAX_POLYGON_POINTS,
+): NormalizedPolygon {
+  if (polygon.length <= maxPoints) return polygon;
+  // Douglas-Peucker recursion depth is O(n) on adversarial point orders —
+  // pre-decimate huge inputs so pathological legacy rows can't blow the
+  // stack during config generation.
+  if (polygon.length > 2048) {
+    const step = Math.ceil(polygon.length / 2048);
+    polygon = polygon.filter((_, i) => i % step === 0);
+    if (polygon.length <= maxPoints) return polygon;
+  }
+  let epsilon = 0.0005;
+  let current = polygon;
+  for (let i = 0; i < 12 && current.length > maxPoints; i++) {
+    current = douglasPeucker(polygon, epsilon);
+    epsilon *= 2;
+  }
+  if (current.length > maxPoints) {
+    const step = Math.ceil(current.length / maxPoints);
+    current = current.filter((_, i) => i % step === 0);
+  }
+  return current.length >= 3 ? current : polygon.slice(0, 3);
+}
+
+/**
+ * Return a payload that passes isValidMaskPayload, repairing legacy
+ * oversize masks via simplification; null when nothing is salvageable.
+ */
+export function repairMaskPayload(value: string | null): string | null {
+  if (!value) return null;
+  if (isValidMaskPayload(value)) return value;
+  const polygons = parsePolygons(value);
+  if (polygons.length === 0) return null;
+  const serialized = JSON.stringify(polygons);
+  return isValidMaskPayload(serialized) ? serialized : null;
+}
+
 /** Parse the stored polygon JSON, dropping malformed polygons. */
 export function parsePolygons(value: string | null): NormalizedPolygon[] {
   if (!value) return [];
@@ -87,19 +169,17 @@ export function parsePolygons(value: string | null): NormalizedPolygon[] {
   }
   if (!Array.isArray(parsed)) return [];
   const polygons: NormalizedPolygon[] = [];
-  // Enforce the same bounds here so legacy rows stored before the API
-  // validated them can't balloon the generated config.
+  // Enforce the polygon-count bound so legacy rows stored before the API
+  // validated them can't balloon the generated config; oversize polygons
+  // are SIMPLIFIED rather than dropped — silently losing a legacy zone
+  // meant alerts kept firing from an area the user believed was excluded.
   for (const poly of parsed.slice(0, MAX_POLYGONS)) {
-    if (
-      !Array.isArray(poly) ||
-      poly.length < 3 ||
-      poly.length > MAX_POLYGON_POINTS
-    ) {
-      continue;
-    }
+    if (!Array.isArray(poly) || poly.length < 3) continue;
     const points = poly.map(parsePoint);
     if (points.every((p): p is NormalizedPoint => p !== null)) {
-      polygons.push(points);
+      polygons.push(
+        points.length > MAX_POLYGON_POINTS ? simplifyPolygon(points) : points,
+      );
     }
   }
   return polygons;

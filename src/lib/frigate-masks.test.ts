@@ -6,7 +6,10 @@ import {
   parsePolygons,
   polygonToCoordinates,
   polygonsToNamedMasks,
+  repairMaskPayload,
+  simplifyPolygon,
   zoneCoordinatesToString,
+  type NormalizedPolygon,
 } from "@/lib/frigate-masks";
 
 const SQUARE: [number, number][] = [
@@ -34,19 +37,22 @@ describe("parsePolygons", () => {
     expect(parsePolygons(stored)).toEqual([SQUARE]);
   });
 
-  it("caps polygon and point counts from legacy oversized rows", () => {
+  it("caps polygon count and simplifies oversize polygons from legacy rows", () => {
     const oversized = JSON.stringify([
       ...Array(MAX_POLYGONS + 10).fill(SQUARE),
     ]);
     expect(parsePolygons(oversized)).toHaveLength(MAX_POLYGONS);
-    const longPolygon = [
-      Array.from({ length: MAX_POLYGON_POINTS + 1 }, (_, i) => [
-        (i % 100) / 100,
-        0.5,
-      ]),
-      SQUARE,
-    ];
-    expect(parsePolygons(JSON.stringify(longPolygon))).toEqual([SQUARE]);
+
+    // An over-point-limit polygon is simplified (kept active), not dropped
+    const circle = Array.from({ length: 1000 }, (_, i) => {
+      const a = (2 * Math.PI * i) / 1000;
+      return [0.5 + 0.3 * Math.cos(a), 0.5 + 0.3 * Math.sin(a)];
+    });
+    const parsed = parsePolygons(JSON.stringify([circle, SQUARE]));
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].length).toBeGreaterThanOrEqual(3);
+    expect(parsed[0].length).toBeLessThanOrEqual(MAX_POLYGON_POINTS);
+    expect(parsed[1]).toEqual(SQUARE);
   });
 
   it("drops polygons containing malformed points", () => {
@@ -133,6 +139,73 @@ describe("isValidMaskPayload", () => {
       ]),
     ];
     expect(isValidMaskPayload(JSON.stringify(tooManyPoints))).toBe(false);
+  });
+});
+
+describe("simplifyPolygon", () => {
+  it("leaves small polygons untouched", () => {
+    expect(simplifyPolygon(SQUARE)).toBe(SQUARE);
+  });
+
+  it("reduces an oversize polygon within bounds while keeping its shape", () => {
+    const circle: NormalizedPolygon = Array.from({ length: 2000 }, (_, i) => {
+      const a = (2 * Math.PI * i) / 2000;
+      return [0.5 + 0.4 * Math.cos(a), 0.5 + 0.4 * Math.sin(a)];
+    });
+    const simplified = simplifyPolygon(circle);
+    expect(simplified.length).toBeGreaterThanOrEqual(3);
+    expect(simplified.length).toBeLessThanOrEqual(MAX_POLYGON_POINTS);
+    // Every kept vertex is an original vertex, still on the circle
+    for (const [x, y] of simplified) {
+      const r = Math.hypot(x - 0.5, y - 0.5);
+      expect(Math.abs(r - 0.4)).toBeLessThan(0.001);
+    }
+  });
+
+  it("survives adversarial comb polygons without blowing the stack", () => {
+    // Alternating decaying spikes force worst-case Douglas-Peucker splits
+    const comb: NormalizedPolygon = Array.from({ length: 10000 }, (_, i) => [
+      i / 10000,
+      i % 2 === 0 ? 0.1 : 0.1 + 0.5 * Math.pow(0.9999, i),
+    ]);
+    const simplified = simplifyPolygon(comb);
+    expect(simplified.length).toBeGreaterThanOrEqual(3);
+    expect(simplified.length).toBeLessThanOrEqual(MAX_POLYGON_POINTS);
+  });
+
+  it("handles degenerate repeated-point polygons", () => {
+    const degenerate: NormalizedPolygon = Array.from(
+      { length: 500 },
+      () => [0.5, 0.5],
+    );
+    const simplified = simplifyPolygon(degenerate);
+    expect(simplified.length).toBeGreaterThanOrEqual(3);
+    expect(simplified.length).toBeLessThanOrEqual(MAX_POLYGON_POINTS);
+  });
+});
+
+describe("repairMaskPayload", () => {
+  it("passes valid payloads through unchanged", () => {
+    const valid = JSON.stringify([SQUARE]);
+    expect(repairMaskPayload(valid)).toBe(valid);
+  });
+
+  it("repairs an oversize legacy polygon into a valid payload", () => {
+    const big = JSON.stringify([
+      Array.from({ length: 600 }, (_, i) => {
+        const a = (2 * Math.PI * i) / 600;
+        return [0.5 + 0.2 * Math.cos(a), 0.5 + 0.2 * Math.sin(a)];
+      }),
+    ]);
+    const repaired = repairMaskPayload(big);
+    expect(repaired).not.toBeNull();
+    expect(isValidMaskPayload(repaired!)).toBe(true);
+  });
+
+  it("returns null for unsalvageable values", () => {
+    expect(repairMaskPayload(null)).toBeNull();
+    expect(repairMaskPayload("not json")).toBeNull();
+    expect(repairMaskPayload("[[[0.1,0.1],[0.2,0.2]]]")).toBeNull();
   });
 });
 

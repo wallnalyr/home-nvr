@@ -20,6 +20,11 @@ export async function register() {
       });
     }, 10000);
 
+    // Watch for Frigate running a config that diverges from the DB
+    // (failed pushes, stale file restarts) and self-heal with one re-push
+    const { startConfigDriftMonitor } = await import("@/lib/config-drift");
+    startConfigDriftMonitor();
+
     // Start stream warmer (snapshot cache + camera health monitoring)
     const { startStreamWarmer } = await import("@/lib/stream-warmer");
     startStreamWarmer().catch((err) => {

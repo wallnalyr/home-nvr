@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   logCreate: vi.fn(),
   sendNotification: vi.fn(),
   getSnapshot: vi.fn(),
+  getEvent: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -28,6 +29,7 @@ vi.mock("@/lib/webpush", () => ({
 
 vi.mock("@/lib/frigate-client", () => ({
   getFrigateEventSnapshot: mocks.getSnapshot,
+  getFrigateEvent: mocks.getEvent,
 }));
 
 type Dispatcher = typeof import("@/lib/notification-dispatcher");
@@ -101,6 +103,9 @@ beforeEach(async () => {
   mocks.logCreate.mockReset().mockResolvedValue({});
   mocks.sendNotification.mockReset().mockResolvedValue({});
   mocks.getSnapshot.mockReset().mockResolvedValue({ ok: false });
+  mocks.getEvent
+    .mockReset()
+    .mockResolvedValue({ data: { box: [0.4, 0.3, 0.2, 0.25] } });
 
   // Fresh module per test so review dedup / cooldown maps start empty
   vi.resetModules();
@@ -193,6 +198,25 @@ describe("handleFrigateEvent severity gating", () => {
   it("notifies at most once per review ID even without a cooldown", async () => {
     mocks.cameraFindFirst.mockResolvedValue(makeCamera({ notifyCooldownSec: 0 }));
     await dispatcher.handleFrigateEvent(makeReview());
+    await dispatcher.handleFrigateEvent(makeReview());
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs the triggering box bottom-center with the push", async () => {
+    // box [x, y, w, h] = [0.4, 0.3, 0.2, 0.25] → bottom-center (0.500, 0.550)
+    const logSpy = vi.spyOn(console, "log");
+    await dispatcher.handleFrigateEvent(makeReview());
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    expect(
+      logSpy.mock.calls.some((c) =>
+        String(c[0]).includes("box-bottom-center=(0.500,0.550)"),
+      ),
+    ).toBe(true);
+    logSpy.mockRestore();
+  });
+
+  it("still delivers the push when the diagnostics event fetch fails", async () => {
+    mocks.getEvent.mockRejectedValue(new Error("frigate restarting"));
     await dispatcher.handleFrigateEvent(makeReview());
     expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
   });

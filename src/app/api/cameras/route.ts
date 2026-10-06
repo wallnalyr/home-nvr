@@ -120,19 +120,27 @@ export async function POST(request: NextRequest) {
       include: { zones: true },
     });
 
-    // Trigger Frigate config regeneration + go2rtc stream sync
+    // Trigger Frigate config regeneration + go2rtc stream sync. A failed
+    // push means Frigate doesn't know this camera exists yet — surface it
+    // like the update route does instead of returning an unqualified 201.
+    let configWarning: string | undefined;
     try {
       const { regenerateFrigateConfig } = await import("@/lib/frigate-config-gen");
       await regenerateFrigateConfig();
     } catch (err) {
-      console.error("[Camera] Config push failed after create:", err instanceof Error ? err.message : err);
+      configWarning = err instanceof Error ? err.message : "Config push failed";
+      console.error("[Camera] Config push failed after create:", configWarning);
     }
 
     const { refreshWarmerCameras } = await import("@/lib/stream-warmer");
     refreshWarmerCameras();
 
     return NextResponse.json(
-      { ...camera, hasSubStream: !!data.rtspSubUrl },
+      {
+        ...camera,
+        hasSubStream: !!data.rtspSubUrl,
+        ...(configWarning ? { configWarning } : {}),
+      },
       { status: 201 }
     );
   } catch (error) {
