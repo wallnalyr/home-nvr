@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { SystemInfo } from "@/components/settings/system-info";
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { FrigateSettings } from "@/components/settings/frigate-settings";
+import { ApiKeySettings } from "@/components/settings/api-key-settings";
 import { ObjectsSettings } from "@/components/settings/objects-settings";
 import { LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -51,7 +52,14 @@ export default function SettingsPage() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "System" && <SystemInfo />}
+      {activeTab === "System" && (
+        <>
+          <SystemInfo />
+          <div className="px-4">
+            <ApiKeySettings />
+          </div>
+        </>
+      )}
       {activeTab === "Objects" && <ObjectsSettings />}
       {activeTab === "Notifications" && <NotificationSettings />}
       {activeTab === "Frigate" && <FrigateSettings />}
