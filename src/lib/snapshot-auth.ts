@@ -14,7 +14,15 @@ import { createRateLimiter } from "@/lib/rate-limit";
 
 // 10 bad keys per minute per IP, then 429. The key is 256-bit random, so
 // this is defense in depth against noisy scanners, not the primary guard.
-const authFailures = createRateLimiter({ max: 10, windowMs: 60_000 });
+// On globalThis so the two snapshot routes (separate Next bundles, each
+// with its own module instance) share one failure budget per IP.
+const globalForSnapshotAuth = globalThis as unknown as {
+  __snapshotAuthLimiter?: ReturnType<typeof createRateLimiter>;
+};
+const authFailures =
+  globalForSnapshotAuth.__snapshotAuthLimiter ??
+  createRateLimiter({ max: 10, windowMs: 60_000 });
+globalForSnapshotAuth.__snapshotAuthLimiter = authFailures;
 
 function clientId(request: NextRequest): string {
   // Behind Traefik the first X-Forwarded-For entry is the real client.
