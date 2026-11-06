@@ -53,7 +53,22 @@ export const CameraFeed = memo(function CameraFeed({
   // Full offline state: grace period expired or server confirmed offline
   const showFullOffline = serverOffline && !inGracePeriod;
   const showClientOffline = status === "offline" && !serverOffline && !inGracePeriod;
-  const showFullSpinner = status === "connecting" && !serverOffline && !inGracePeriod;
+
+  // Snapshot poster: the server caches a recent frame for every camera, so
+  // show it immediately while the stream connects (initial load) or
+  // reconnects (grace period) — the live video fades in over it. Hidden
+  // again if the image itself fails to load (e.g. no cached frame yet).
+  const [snapshotFailed, setSnapshotFailed] = useState(false);
+  // A live stream means the warmer has frames again — allow the poster
+  // on the next interruption even if an early fetch failed.
+  if (isLive && snapshotFailed) setSnapshotFailed(false);
+  const showSnapshot =
+    !serverOffline &&
+    !snapshotFailed &&
+    (inGracePeriod || (status === "connecting" && !wasLive));
+
+  const showFullSpinner =
+    status === "connecting" && !serverOffline && !inGracePeriod && !showSnapshot;
 
   // Auto-retry when server health says camera is online but client gave up
   const prevServerOfflineRef = useRef<boolean | undefined>(serverOffline);
@@ -259,13 +274,14 @@ export const CameraFeed = memo(function CameraFeed({
           ref={zoomTargetRef}
           className={cn("absolute inset-0", isFullscreen && "will-change-transform")}
         >
-          {/* Grace period: last snapshot while reconnecting */}
-          {inGracePeriod && (
+          {/* Cached snapshot while connecting or reconnecting */}
+          {showSnapshot && (
             <div className="absolute inset-0 bg-black">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={`/api/go2rtc/frame?src=${encodeURIComponent(cameraSlug)}`}
                 alt=""
+                onError={() => setSnapshotFailed(true)}
                 className="absolute inset-0 w-full h-full object-contain opacity-70"
               />
             </div>
@@ -284,8 +300,8 @@ export const CameraFeed = memo(function CameraFeed({
           />
         </div>
 
-        {/* Grace period spinner (kept outside the zoom target) */}
-        {inGracePeriod && (
+        {/* Corner spinner over the snapshot (kept outside the zoom target) */}
+        {showSnapshot && (
           <div className="absolute bottom-2 right-2">
             <Loader2 className="h-4 w-4 animate-spin text-white/70" />
           </div>
