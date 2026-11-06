@@ -8,8 +8,18 @@ export type StreamMethod = "mse" | "webrtc" | null;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS = [1000, 2000, 4000];
 
-const MSE_TIMEOUT = 4000;
+// Handshake must complete fast (go2rtc reachable, stream exists) — but once
+// go2rtc has answered, the first frame can legitimately take a full keyframe
+// interval plus buffering, so it gets a separate, longer allowance. Treating
+// a slow keyframe as failure used to tear down a working connection and
+// cascade into the WebRTC fallback + retry ladder.
+const MSE_HANDSHAKE_TIMEOUT = 4000;
+const MSE_MEDIA_TIMEOUT = 12000;
 const WEBRTC_TIMEOUT = 5000;
+
+// Keep streams alive this long after the app is backgrounded, so quick
+// app switches resume instantly instead of paying a full reconnect.
+const HIDDEN_TEARDOWN_GRACE_MS = 15000;
 
 const BUFFER_TRIM_INTERVAL = 2000;
 const BUFFER_KEEP_SECONDS = 3;
@@ -90,6 +100,10 @@ export function useGo2rtcStream(slug: string) {
   // Fullscreen tracking — prevents visibilitychange from tearing down streams
   const fullscreenRef = useRef(false);
 
+  // Background grace window tracking
+  const hiddenAtRef = useRef<number | null>(null);
+  const hiddenTeardownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Track when stream went live — only reset retry count after stable for 5s
   const liveAtRef = useRef<number>(0);
   const stableTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -98,6 +112,10 @@ export function useGo2rtcStream(slug: string) {
   const scheduleRetryRef = useRef<() => void>(() => {});
 
   const cleanup = useCallback(() => {
+    if (hiddenTeardownRef.current) {
+      clearTimeout(hiddenTeardownRef.current);
+      hiddenTeardownRef.current = null;
+    }
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
@@ -175,7 +193,7 @@ export function useGo2rtcStream(slug: string) {
         if (!resolved) { resolved = true; resolve(false); }
       };
 
-      const timeout = setTimeout(fail, MSE_TIMEOUT);
+      let timeout = setTimeout(fail, MSE_HANDSHAKE_TIMEOUT);
 
       ms.addEventListener("sourceopen", () => {
         const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -201,6 +219,10 @@ export function useGo2rtcStream(slug: string) {
             try {
               const msg = JSON.parse(event.data);
               if (msg.type === "mse" && msg.value) {
+                // Handshake complete — go2rtc is alive and the stream
+                // exists. Swap to the longer first-frame allowance.
+                clearTimeout(timeout);
+                timeout = setTimeout(fail, MSE_MEDIA_TIMEOUT);
                 sourceBuffer = ms.addSourceBuffer(msg.value);
                 sourceBuffer.mode = "segments";
                 sourceBuffer.addEventListener("updateend", () => {
@@ -493,22 +515,46 @@ export function useGo2rtcStream(slug: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Pause on tab hide, reconnect on tab visible.
+  // Tear down on tab hide (after a grace window), reconnect on tab visible.
   // Skip during fullscreen transitions — iOS fires visibilitychange when
   // entering/exiting native fullscreen, which would tear down the stream.
   useEffect(() => {
     const handleVisibility = () => {
       if (fullscreenRef.current) return;
       if (document.visibilityState === "hidden") {
-        cleanup();
+        // Don't tear down immediately — a quick app switch should resume
+        // instantly. The timer stops the background bandwidth drain if the
+        // user doesn't come back soon. (On iOS the PWA's JS freezes while
+        // backgrounded, so the timer fires on return; the elapsed-time
+        // check below handles that case.)
+        hiddenAtRef.current = Date.now();
+        if (hiddenTeardownRef.current) clearTimeout(hiddenTeardownRef.current);
+        hiddenTeardownRef.current = setTimeout(() => {
+          hiddenTeardownRef.current = null;
+          cleanup();
+          setStatus("connecting");
+        }, HIDDEN_TEARDOWN_GRACE_MS);
       } else {
-        retryCountRef.current = 0;
-        connectRef.current();
+        const hiddenFor =
+          hiddenAtRef.current !== null ? Date.now() - hiddenAtRef.current : 0;
+        hiddenAtRef.current = null;
+        if (hiddenTeardownRef.current) {
+          clearTimeout(hiddenTeardownRef.current);
+          hiddenTeardownRef.current = null;
+        }
+        if (liveRef.current && hiddenFor < HIDDEN_TEARDOWN_GRACE_MS) {
+          // Stream survived the background stint — jump back to live edge
+          // (recover reconnects on its own if playback doesn't resume).
+          recover();
+        } else {
+          retryCountRef.current = 0;
+          connectRef.current();
+        }
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [cleanup]);
+  }, [cleanup, recover]);
 
   return { status, method, videoRef, retry, recover, setFullscreen };
 }
