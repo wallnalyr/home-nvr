@@ -138,6 +138,25 @@ export function ApiKeySettings() {
               <p className="text-xs text-muted-foreground">
                 Snapshot URLs for your hub:
               </p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium w-24 truncate shrink-0">
+                  Camera list
+                </span>
+                <code className="flex-1 text-[10px] font-mono truncate text-muted-foreground">
+                  {`${origin}/api/snapshot?key=${freshKey}`}
+                </code>
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 rounded-lg"
+                  onClick={() =>
+                    copyText(`${origin}/api/snapshot?key=${freshKey}`, "Camera list URL")
+                  }
+                  aria-label="Copy camera list URL"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
               {cameras.map((cam) => (
                 <div key={cam.id} className="flex items-center gap-2">
                   <span className="text-xs font-medium w-24 truncate shrink-0">
@@ -158,8 +177,10 @@ export function ApiKeySettings() {
                 </div>
               ))}
               <p className="text-[10px] text-muted-foreground">
-                Append <code className="font-mono">&amp;h=720</code> to resize.
-                The key can also be sent as an{" "}
+                The camera list returns JSON (name, slug, online, snapshot
+                path) so the hub can discover cameras automatically. Append{" "}
+                <code className="font-mono">&amp;h=720</code> to image URLs to
+                resize. The key can also be sent as an{" "}
                 <code className="font-mono">X-Api-Key</code> header instead of
                 the <code className="font-mono">?key=</code> parameter.
               </p>
