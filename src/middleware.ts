@@ -14,6 +14,9 @@ const PUBLIC_PATHS = [
   "/api/auth/logout",
   "/api/auth/refresh",
   "/api/system/health",
+  // Authenticated by its own API key (see src/app/api/snapshot/[slug]) —
+  // callers are kiosk devices with no browser session
+  "/api/snapshot",
   "/manifest.json",
   "/manifest.webmanifest",
   "/sw.js",
