@@ -32,7 +32,17 @@ interface CameraActivity {
   endedAt: number | null; // set when the last open review ended
 }
 
-const activity = new Map<string, CameraActivity>();
+// MUST live on globalThis: Next bundles instrumentation (where the MQTT
+// dispatcher writes activity) and each API route (where /api/snapshot
+// reads it) separately, each with its own module instance — a plain
+// module-level Map here is written in one bundle and read empty in the
+// other. Same pattern as stream-warmer and db.
+const globalForActivity = globalThis as unknown as {
+  __cameraActivity?: Map<string, CameraActivity>;
+};
+const activity =
+  globalForActivity.__cameraActivity ?? new Map<string, CameraActivity>();
+globalForActivity.__cameraActivity = activity;
 
 interface ReviewMessage {
   type?: string;

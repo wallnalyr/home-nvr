@@ -64,7 +64,10 @@ beforeEach(async () => {
   vi.setSystemTime(new Date("2026-11-06T12:00:00Z"));
   mocks.cameraFindFirst.mockReset().mockResolvedValue(makeCamera());
   mocks.systemConfigFindUnique.mockReset().mockResolvedValue(null);
-  // Fresh module per test so the activity map starts empty
+  // The activity map lives on globalThis (shared across Next bundles in
+  // production), so resetting modules alone doesn't clear it — drop the
+  // global too for a clean slate per test
+  delete (globalThis as { __cameraActivity?: unknown }).__cameraActivity;
   vi.resetModules();
   tracker = await import("@/lib/activity-tracker");
 });
@@ -192,6 +195,21 @@ describe("getActiveCameras label filter", () => {
     expect(tracker.getActiveCameras(["person"])).toEqual({});
     expect(tracker.getActiveCameras(["car"]).front).toBeDefined();
     expect(tracker.getActiveCameras().front).toBeDefined();
+  });
+});
+
+describe("cross-bundle state sharing", () => {
+  it("shares activity between separate module instances via globalThis", async () => {
+    // Regression: Next bundles instrumentation (writer) and API routes
+    // (reader) separately — each gets its own module instance. With a
+    // plain module-level map, the route read an empty copy and cameras
+    // never showed active even while notifications fired.
+    await tracker.trackReviewActivity(makeReview());
+
+    vi.resetModules(); // simulate the route's independent bundle
+    const readerInstance = await import("@/lib/activity-tracker");
+    expect(readerInstance).not.toBe(tracker);
+    expect(readerInstance.getActiveCameras().front).toBeDefined();
   });
 });
 
