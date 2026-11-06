@@ -178,7 +178,11 @@ export function ApiKeySettings() {
               ))}
               <p className="text-[10px] text-muted-foreground">
                 The camera list returns JSON (name, slug, online, snapshot
-                path) so the hub can discover cameras automatically. Append{" "}
+                path, plus <code className="font-mono">active</code>/
+                <code className="font-mono">label</code> while a detection
+                matching the camera&apos;s notification rules is in progress)
+                so the hub can discover cameras and switch to live activity
+                automatically. Append{" "}
                 <code className="font-mono">&amp;h=720</code> to image URLs to
                 resize. The key can also be sent as an{" "}
                 <code className="font-mono">X-Api-Key</code> header instead of

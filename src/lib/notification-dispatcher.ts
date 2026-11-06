@@ -4,11 +4,9 @@ import {
   getFrigateEvent,
   getFrigateEventSnapshot,
 } from "@/lib/frigate-client";
-import {
-  getAudioLabelById,
-  DEFAULT_ENABLED_OBJECTS,
-  DEFAULT_ENABLED_AUDIO,
-} from "@/lib/objects";
+import { getAudioLabelById, DEFAULT_ENABLED_AUDIO } from "@/lib/objects";
+import { resolveReviewLabels } from "@/lib/review-filter";
+import { trackReviewActivity } from "@/lib/activity-tracker";
 import type { NotificationPayload } from "@/types/notification";
 
 // Audio cooldown: camera-label -> last notification timestamp
@@ -78,6 +76,16 @@ export async function handleFrigateEvent(payload: unknown) {
 
   // Treat everything else as a frigate/reviews payload
   const review = payload as FrigateReviewPayload;
+
+  // Feed the kiosk activity tracker on every review message — including
+  // `end`, which the notification path below ignores. Activity has no
+  // cooldown or dedup (it's a state, not an alert), and a tracker failure
+  // must never block pushes.
+  try {
+    await trackReviewActivity(review);
+  } catch (err) {
+    console.error("[Activity] Tracker failed:", err);
+  }
 
   // Fire on the start of a new review, or on an update that escalates a
   // review from detection to alert severity. `end` only marks activity
@@ -155,13 +163,20 @@ async function sendReviewPushes(
     return;
   }
 
-  // Look up camera in DB by slug (Frigate uses slug as camera identifier)
-  const camera = await prisma.camera.findFirst({
-    where: { slug: cameraName, enabled: true, notifyEnabled: true },
-  });
-  if (!camera) {
+  // Camera lookup + label narrowing live in the shared review filter so
+  // kiosk activity (activity-tracker) applies identical rules.
+  const resolved = await resolveReviewLabels(cameraName, objects);
+  if (!resolved) {
     console.log(
       `[Notification] Skipped: camera "${cameraName}" not found, disabled, or notifications off`,
+    );
+    return;
+  }
+  const { camera, allowedLabels } = resolved;
+
+  if (allowedLabels.length === 0) {
+    console.log(
+      `[Notification] Skipped: no allowed labels in review ${reviewId} (had [${objects.join(",")}])`,
     );
     return;
   }
@@ -192,50 +207,6 @@ async function sendReviewPushes(
       reviewCooldowns.delete(cameraName);
     }
   };
-
-  // Apply per-camera, global, and notification-filter object lists to the
-  // review's object set. The review fires for whatever Frigate tracked; we
-  // narrow it down to only labels the user actually wants notifications for.
-  const globalObjectsRow = await prisma.systemConfig.findUnique({
-    where: { key: "enabled_objects" },
-  });
-  const globalObjects: string[] = globalObjectsRow
-    ? JSON.parse(globalObjectsRow.value)
-    : DEFAULT_ENABLED_OBJECTS;
-
-  const cameraObjects = camera.objectsTrack
-    .split(",")
-    .map((o) => o.trim())
-    .filter(Boolean);
-
-  const notifObjRow = await prisma.systemConfig.findUnique({
-    where: { key: "notification_objects" },
-  });
-  const notifAllowed: string[] | null = notifObjRow
-    ? JSON.parse(notifObjRow.value)
-    : null;
-
-  // Frigate rewrites sub-labeled objects in review payloads (a recognized
-  // person arrives as "person-verified") — strip the suffix so they still
-  // match the tracked-label lists.
-  const reviewLabels = [
-    ...new Set(objects.map((label) => label.replace(/-verified$/, ""))),
-  ];
-
-  const allowedLabels = reviewLabels.filter(
-    (label) =>
-      globalObjects.includes(label) &&
-      cameraObjects.includes(label) &&
-      (!notifAllowed || notifAllowed.includes(label)),
-  );
-
-  if (allowedLabels.length === 0) {
-    console.log(
-      `[Notification] Skipped: no allowed labels in review ${reviewId} (had [${objects.join(",")}])`,
-    );
-    releaseCooldown();
-    return;
-  }
 
   // Get all push subscriptions with preferences
   const subscriptions = await prisma.pushSubscription.findMany({
